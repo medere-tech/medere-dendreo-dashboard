@@ -4,6 +4,7 @@
 // - Gestion du 429 (HTTP_TOO_MANY_REQUESTS) : backoff + respect de Retry-After.
 
 import { makeRedactor } from './redact';
+import { DENDREO_RATE_DEFAULTS, RateLimiter } from './rate-limiter';
 
 export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 
@@ -14,10 +15,16 @@ export interface DendreoClientOptions {
   maxRetries?: number;
   /** Délai de base du backoff en ms (défaut 1000). */
   backoffBaseMs?: number;
+  /** Limiteur de débit : nb max de requêtes par fenêtre (défaut 80). */
+  maxRequests?: number;
+  /** Limiteur de débit : largeur de fenêtre en ms (défaut 10000). */
+  windowMs?: number;
   /** Injection pour tests. Défaut : fetch global. */
   fetchImpl?: FetchLike;
   /** Injection pour tests. Défaut : setTimeout. */
   sleep?: (ms: number) => Promise<void>;
+  /** Injection pour tests. Défaut : Date.now (utilisé par le limiteur). */
+  now?: () => number;
 }
 
 /** Erreur Dendreo : son message est déjà rédigé (clé masquée). */
@@ -40,6 +47,7 @@ export class DendreoClient {
   private readonly fetchImpl: FetchLike;
   private readonly sleep: (ms: number) => Promise<void>;
   private readonly redact: (input: unknown) => string;
+  private readonly limiter: RateLimiter;
 
   constructor(opts: DendreoClientOptions) {
     this.baseUrl = opts.baseUrl.replace(/\/+$/, '');
@@ -49,6 +57,12 @@ export class DendreoClient {
     this.fetchImpl = opts.fetchImpl ?? ((input, init) => fetch(input, init));
     this.sleep = opts.sleep ?? defaultSleep;
     this.redact = makeRedactor(opts.apiKey);
+    this.limiter = new RateLimiter({
+      maxRequests: opts.maxRequests ?? DENDREO_RATE_DEFAULTS.maxRequests,
+      windowMs: opts.windowMs ?? DENDREO_RATE_DEFAULTS.windowMs,
+      sleep: this.sleep,
+      now: opts.now,
+    });
   }
 
   /** GET typé. `params` est encodé dans la query (jamais la clé). */
@@ -61,6 +75,9 @@ export class DendreoClient {
 
     let attempt = 0;
     for (;;) {
+      // Limiteur de débit : toute requête (1re tentative ET retries) traverse la fenêtre.
+      await this.limiter.acquire();
+
       let res: Response;
       try {
         res = await this.fetchImpl(url.toString(), {
