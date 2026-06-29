@@ -1,0 +1,39 @@
+rules_version = '2';
+
+// Outil interne Médéré. Fail-closed : tout est refusé par défaut ; on n'autorise
+// que la LECTURE aux utilisateurs Médéré authentifiés. Écriture client = jamais
+// (seul l'Admin SDK serveur écrit, en contournant ces règles).
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // --- Domaine d'accès : constante unique, regex ANCRÉE (pas de endsWith) ---
+    function isMedereUser() {
+      return request.auth != null
+        && request.auth.token.email is string
+        && request.auth.token.email_verified == true
+        && request.auth.token.email.matches('^[^@]+@medere[.]fr$');
+    }
+
+    // Sessions : lecture Médéré ; aucune écriture client.
+    match /sessions/{idAdf} {
+      allow read: if isMedereUser();
+      allow write: if false;
+    }
+
+    // Signatures : lecture Médéré ; aucune écriture client.
+    match /signatures/{sigId} {
+      allow read: if isMedereUser();
+      allow write: if false;
+    }
+
+    // _meta : aucun accès client (lecture/écriture). Admin SDK uniquement.
+    match /_meta/{doc} {
+      allow read, write: if false;
+    }
+
+    // Fail-closed explicite : tout chemin non listé ci-dessus est refusé.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

@@ -32,6 +32,39 @@ export function loadDendreoEnv(): DendreoEnv {
   return { apiKey, baseUrl };
 }
 
+export interface FirebaseEnv {
+  projectId: string;
+  clientEmail: string;
+  privateKey: string;
+}
+
+/**
+ * Charge les creds Firebase Admin depuis l'environnement.
+ * - gère le `\n` échappé de la private key (transformé en vrais sauts de ligne) ;
+ * - ne logge JAMAIS de valeur ; en cas de var manquante, l'erreur ne cite que le NOM.
+ */
+export function loadFirebaseEnv(): FirebaseEnv {
+  loadEnvLocalOnce();
+  const projectId = process.env.FIREBASE_PROJECT_ID?.trim();
+  const clientEmail = process.env.FIREBASE_CLIENT_EMAIL?.trim();
+  let privateKey = process.env.FIREBASE_PRIVATE_KEY;
+
+  const missing: string[] = [];
+  if (!projectId) missing.push('FIREBASE_PROJECT_ID');
+  if (!clientEmail) missing.push('FIREBASE_CLIENT_EMAIL');
+  if (!privateKey) missing.push('FIREBASE_PRIVATE_KEY');
+  if (missing.length) {
+    throw new Error(`Variable(s) Firebase manquante(s) dans .env.local : ${missing.join(', ')}`);
+  }
+
+  // \n littéraux (JSON/dotenv) → vrais retours à la ligne attendus par le SDK.
+  privateKey = privateKey!.replace(/\\n/g, '\n');
+  // tolère d'éventuels guillemets entourants laissés par le shell/dotenv.
+  if (privateKey.startsWith('"') && privateKey.endsWith('"')) privateKey = privateKey.slice(1, -1).replace(/\\n/g, '\n');
+
+  return { projectId: projectId!, clientEmail: clientEmail!, privateKey };
+}
+
 let envLoaded = false;
 function loadEnvLocalOnce(): void {
   if (envLoaded) return;

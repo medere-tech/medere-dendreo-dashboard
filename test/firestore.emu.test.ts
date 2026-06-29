@@ -1,0 +1,107 @@
+// test/firestore.emu.test.ts — Couche de données Firestore contre l'ÉMULATEUR.
+// Déterministe, zéro écriture prod. Skip si pas d'émulateur (npm test reste vert).
+// Exécution réelle : npm run test:emu.
+
+import { beforeEach, describe, expect, it } from 'vitest';
+import { getDb } from '../src/firebase/admin';
+import {
+  getSession,
+  listSignaturesByStatus,
+  recalcSessionCounts,
+  upsertSession,
+  upsertSignature,
+} from '../src/firebase/firestore';
+import { signatureKey } from '../src/firebase/keys';
+import type { SessionUpsertInput, SignatureUpsertInput } from '../src/firebase/types';
+
+const onEmu = describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST);
+
+async function clear(collection: string): Promise<void> {
+  const snap = await getDb().collection(collection).get();
+  const batch = getDb().batch();
+  snap.forEach((d) => batch.delete(d.ref));
+  await batch.commit();
+}
+
+const session = (idAdf: string): SessionUpsertInput => ({
+  idAdf,
+  numeroComplet: `ADF_${idAdf}`,
+  intitule: 'Session test',
+  dateDebut: '2026-01-01T00:00:00.000Z',
+  dateFin: '2026-06-30T00:00:00.000Z',
+  idEtapeProcess: '6',
+  etape: 'Réalisation',
+  idCentre: '1',
+  type: 'inter',
+  totalParticipants: 4,
+});
+
+const sig = (idAdf: string, idParticipant: string, over: Partial<SignatureUpsertInput>): SignatureUpsertInput => ({
+  idAdf,
+  idParticipant,
+  doctypeId: '111',
+  nom: 'Prenom Nom',
+  status: 'notSent',
+  signatureDate: null,
+  sentDate: null,
+  viewerUrl: null,
+  sessionNumeroComplet: `ADF_${idAdf}`,
+  sessionIntitule: 'Session test',
+  sessionDateDebut: '2026-01-01T00:00:00.000Z',
+  ...over,
+});
+
+onEmu('couche Firestore (émulateur)', () => {
+  beforeEach(async () => {
+    await clear('signatures');
+    await clear('sessions');
+  });
+
+  it('upsert + relecture session et signatures', async () => {
+    await upsertSession(session('T1'));
+    await upsertSignature(sig('T1', 'p1', { status: 'signed', signatureDate: '2026-02-01T10:00:00.000Z', viewerUrl: 'https://x/1' }));
+    await upsertSignature(sig('T1', 'p2', { status: 'pending', sentDate: '2026-03-01T10:00:00.000Z', viewerUrl: 'https://x/2' }));
+
+    const s = await getSession('T1');
+    expect(s?.numeroComplet).toBe('ADF_T1');
+    expect(s?.source).toBe('dendreo');
+    expect(typeof s?.lastSyncedAt).toBe('string');
+
+    const pending = await listSignaturesByStatus('pending', { idAdf: 'T1' });
+    expect(pending).toHaveLength(1);
+    expect(pending[0]?.idParticipant).toBe('p2');
+  });
+
+  it('idempotence : ré-upsert de la même signature ne crée pas de doublon', async () => {
+    const input = sig('T1', 'p1', { status: 'pending', sentDate: '2026-03-01T10:00:00.000Z' });
+    await upsertSignature(input);
+    await upsertSignature(input);
+    await upsertSignature({ ...input, nom: 'Maj Nom' }); // réécriture (last-write-wins)
+
+    const all = await getDb().collection('signatures').get();
+    expect(all.size).toBe(1);
+    const doc = await getDb().collection('signatures').doc(signatureKey('T1', 'p1', '111')).get();
+    expect(doc.get('nom')).toBe('Maj Nom');
+  });
+
+  it('recalcSessionCounts (transaction) recompte counts + oldestPendingSentDate', async () => {
+    await upsertSession(session('T2'));
+    await upsertSignature(sig('T2', 'a', { status: 'signed', signatureDate: '2026-02-10T00:00:00.000Z' }));
+    await upsertSignature(sig('T2', 'b', { status: 'signed', signatureDate: '2026-02-11T00:00:00.000Z' }));
+    await upsertSignature(sig('T2', 'c', { status: 'pending', sentDate: '2026-03-20T00:00:00.000Z' }));
+    await upsertSignature(sig('T2', 'd', { status: 'pending', sentDate: '2026-03-05T00:00:00.000Z' }));
+    await upsertSignature(sig('T2', 'e', { status: 'notSent' }));
+
+    const res = await recalcSessionCounts('T2');
+    expect(res.counts).toEqual({ signed: 2, pending: 2, notSent: 1 });
+    expect(res.oldestPendingSentDate).toBe('2026-03-05T00:00:00.000Z'); // le plus ancien pending
+
+    const s = await getSession('T2');
+    expect(s?.counts).toEqual({ signed: 2, pending: 2, notSent: 1 });
+    expect(s?.oldestPendingSentDate).toBe('2026-03-05T00:00:00.000Z');
+  });
+
+  it('validation stricte : rejette un input incohérent (signed sans signatureDate)', async () => {
+    await expect(upsertSignature(sig('T3', 'p1', { status: 'signed' }))).rejects.toThrow();
+  });
+});
