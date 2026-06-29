@@ -6,16 +6,23 @@
   "type": "module",
   "scripts": {
     "recon": "node scripts/recon.mjs",
+    "backfill": "tsx scripts/backfill.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "test:emu": "firebase emulators:exec --only firestore --project demo-medere-dendreo \"vitest run\"",
+    "audit:prod": "npm audit --omit=dev --audit-level=high",
+    "prepare": "husky"
   },
   "engines": {
     "node": ">=18.17.0"
   },
   "devDependencies": {
+    "@firebase/rules-unit-testing": "^5.0.1",
     "@types/node": "^20.14.0",
+    "firebase": "^12.15.0",
     "firebase-tools": "^15.22.3",
+    "husky": "^9.1.7",
     "tsx": "^4.19.2",
     "typescript": "^5.5.4",
     "vitest": "^2.0.5"
