@@ -1,0 +1,22 @@
+{
+  "name": "medere-dendreo-dashboard",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Dashboard interne Signatures Dendreo (Médéré) — lecture seule. S0: reconnaissance.",
+  "type": "module",
+  "scripts": {
+    "recon": "node scripts/recon.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "engines": {
+    "node": ">=18.17.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.5.4",
+    "vitest": "^2.0.5"
+  }
+}

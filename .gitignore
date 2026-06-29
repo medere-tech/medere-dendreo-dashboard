@@ -1,0 +1,24 @@
+# Secrets — JAMAIS commités
+.env.local
+.env*.local
+.env
+
+# Dépendances
+node_modules/
+
+# Build / Next.js (sprints ultérieurs)
+.next/
+out/
+dist/
+build/
+
+# Logs & divers
+*.log
+npm-debug.log*
+.DS_Store
+Thumbs.db
+
+# Sorties de reconnaissance brutes (peuvent contenir de la PII)
+scratchpad/
+recon-output*.txt
+recon-output*.json
