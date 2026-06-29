@@ -1,0 +1,47 @@
+[
+  {
+    "id": "131615",
+    "uuid": "uuid-131615",
+    "collection_name": "signature",
+    "name": "Convention_Participant_Formation_Médéré",
+    "doctype_id": "111",
+    "mime_type": "application/pdf",
+    "signature_date": "2026-06-14T14:26:18.000000Z",
+    "related_media_id": "",
+    "created_at": "2026-06-12T07:39:17.000000Z",
+    "cible": "action-de-formation",
+    "id_cible": "3894",
+    "public_url": "https://public.dendreo.com/REDACTED/media/REDACTED",
+    "entite_liee": { "Participant": { "id_participant": "455015", "nom": "NOM455015", "prenom": "Prenom455015" } }
+  },
+  {
+    "id": "131684",
+    "uuid": "uuid-131684",
+    "collection_name": "signature",
+    "name": "Convention_Participant_Formation_Médéré",
+    "doctype_id": "111",
+    "mime_type": "application/pdf",
+    "signature_date": "2026-06-13T12:21:15.000000Z",
+    "related_media_id": "",
+    "created_at": "2026-06-12T18:57:54.000000Z",
+    "cible": "action-de-formation",
+    "id_cible": "3894",
+    "public_url": "https://public.dendreo.com/REDACTED/media/REDACTED",
+    "entite_liee": { "Participant": { "id_participant": "452275", "nom": "NOM452275", "prenom": "Prenom452275" } }
+  },
+  {
+    "id": "131903",
+    "uuid": "uuid-131903",
+    "collection_name": "signature",
+    "name": "Convention_Participant_Formation_Médéré",
+    "doctype_id": "111",
+    "mime_type": "application/pdf",
+    "signature_date": "2026-06-16T14:50:10.000000Z",
+    "related_media_id": "",
+    "created_at": "2026-06-16T10:41:07.000000Z",
+    "cible": "action-de-formation",
+    "id_cible": "3894",
+    "public_url": "https://public.dendreo.com/REDACTED/media/REDACTED",
+    "entite_liee": { "Participant": { "id_participant": "455031", "nom": "NOM455031", "prenom": "Prenom455031" } }
+  }
+]
