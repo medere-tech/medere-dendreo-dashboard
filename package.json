@@ -18,5 +18,10 @@
     "tsx": "^4.19.2",
     "typescript": "^5.5.4",
     "vitest": "^2.0.5"
+  },
+  "dependencies": {
+    "npm": "^11.17.0",
+    "run": "^1.5.0",
+    "typecheck": "^0.1.2"
   }
 }
