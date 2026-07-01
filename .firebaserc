@@ -1,5 +1,6 @@
 {
   "projects": {
-    "default": "demo-medere-dendreo"
+    "default": "demo-medere-dendreo",
+    "prod": "medere-dendreo-dashboard"
   }
 }
