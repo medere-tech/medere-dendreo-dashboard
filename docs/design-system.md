@@ -35,6 +35,8 @@
 
 ⇒ Une **seule** couleur vive dans toute l'interface (l'orange = « à relancer »). Signé et pas-encore-envoyé restent en neutres, différenciés par **icône + libellé**.
 
+**Boutons / CTA = NEUTRES.** L'orange n'est **jamais** un bouton, un lien de navigation, ni un CTA (connexion, filtres, actions). Un bouton premium = fond blanc/neutre, bordure fine, texte sombre, hover discret. L'orange ne sert **qu'à** signaler un statut « à relancer ». Cette discipline est ce qui rend l'interface premium : la couleur veut dire quelque chose.
+
 ⇒ Résultat : l'œil tombe **directement sur l'orange = le travail à faire**. Le reste est calme.
 
 ### ⚠️ Décision explicite : on n'utilise PAS la palette « Specialist »

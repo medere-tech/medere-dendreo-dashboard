@@ -28,6 +28,7 @@
 - Restreindre les champs : `?fields=col1,col2` réduit la charge.
 - Ne poller que les **sessions actives** (étape « Réalisation » / prévisionnelle pertinente), pas tout l'historique.
 - Stocker en **Firestore** (miroir) et lire Firestore côté UI — l'API Dendreo n'est appelée que par la couche de sync.
+- **Throttle client global** : le `DendreoClient` limite lui-même le débit à **≤ 80 requêtes / 10 s** (marge sous le plafond 100/10s), pour TOUTE la sortie (recon, backfill, sync). ⚠️ La concurrence (pool) ne suffit PAS : elle borne le parallélisme, pas le débit. Le backoff 429 reste le filet de dernier recours.
 - Privilégier les **webhooks** (push) au polling quand c'est possible.
 
 ## 3. Conventions de requête

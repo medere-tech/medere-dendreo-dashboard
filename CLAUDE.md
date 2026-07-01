@@ -57,7 +57,7 @@ On remplace un processus 100 % manuel (ouvrir chaque session une par une, export
 3. **Petits pas validés.** Une étape = un livrable cadré + ses tests. Tu proposes les commandes PowerShell, Déthié les lance et te renvoie la sortie. Tu attends.
 4. **Tests pour toute logique.** Calcul de statut « signé / à relancer », matching de document, dérivation → tests `vitest`.
 5. **Secrets protégés.** Voir §4. `.env.local` jamais commité, clé jamais loggée.
-6. **Claude Code ne commite JAMAIS et ne push JAMAIS.** C'est **Déthié** qui exécute tous les `git add` / `git commit` / `git push`. Raison : le déploiement Vercel est lié au **seul compte de Déthié** — un commit/push venant de Claude Code peut casser ou faire refuser le déploiement. Claude Code se contente de **proposer les messages de commit** (conventionnels, atomiques) ; Déthié les exécute lui-même.
+6. **Claude Code ne commite JAMAIS et ne push JAMAIS.** C'est **Déthié** qui exécute tous les `git add` / `git commit` / `git push`. Raison : le déploiement Vercel est lié au **seul compte de Déthié** — un commit/push venant de Claude Code peut casser ou faire refuser le déploiement. Claude Code se contente de **proposer les messages de commit** (conventionnels, atomiques) ; Déthié les exécute lui-même. Les messages ne contiennent **JAMAIS** de trailer `Co-Authored-By` ni aucune mention de Claude/IA : **Déthié est le seul auteur. Non négociable.**
 7. **Tu signales les angles morts.** Si tu repères un risque (quota API, PII, edge case), tu le dis explicitement plutôt que de l'enterrer.
 
 ---
