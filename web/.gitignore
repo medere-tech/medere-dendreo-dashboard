@@ -1,0 +1,14 @@
+# App Next — dépendances & build
+/node_modules
+/.next
+/out
+/build
+
+# Env local (secrets côté client : clés NEXT_PUBLIC_*) — JAMAIS commité
+.env.local
+.env*.local
+
+# Divers
+*.tsbuildinfo
+next-env.d.ts.bak
+.DS_Store

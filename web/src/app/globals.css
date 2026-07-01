@@ -1,0 +1,54 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * Aileron (TipoType, licenciée) — auto-hébergée, pas de CDN.
+ * Déposer les .ttf dans web/public/fonts/ avec CES noms exacts.
+ * Tant qu'un fichier est absent, la pile système prend le relais (font-family
+ * défini dans tailwind.config.ts) : le build ne casse pas.
+ */
+@font-face {
+  font-family: 'Aileron';
+  src: url('/fonts/Aileron-Light.ttf') format('truetype');
+  font-weight: 300;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Aileron';
+  src: url('/fonts/Aileron-Regular.ttf') format('truetype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Aileron';
+  src: url('/fonts/Aileron-SemiBold.ttf') format('truetype');
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Aileron';
+  src: url('/fonts/Aileron-Bold.ttf') format('truetype');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+  body {
+    text-rendering: optimizeLegibility;
+  }
+  /* Focus visible sobre et accessible (AA) — neutre sombre.
+     L'orange (#F19953) reste réservé au SEUL statut "à relancer". */
+  :focus-visible {
+    outline: 2px solid #302d2d;
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+}
