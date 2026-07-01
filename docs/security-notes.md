@@ -46,3 +46,53 @@
 - **Production : 0 vulnérabilité** (`npm audit --omit=dev`). La seule dépendance runtime est `firebase-admin`, dont la chaîne est désormais saine grâce à l'override `uuid`.
 - **Dev : 8 vulns restantes** (1 critical, 1 high, 6 moderate), **toutes** dans l'outillage local (`vitest`/`vite`/`esbuild`, `firebase-tools`) et **non déployées**. Leur seul correctif passe par un **changement breaking** d'une dépendance directe (`vitest@4` / downgrade `firebase-tools`) → reporté volontairement (règles 3-4), sans impact sur l'app livrée.
 - **Suivi recommandé** (hors S2.1) : planifier la migration `vitest 2 → 4` (referme critical+high+moderate dev d'un coup) ; revoir l'override `uuid` quand `firebase-admin` embarquera nativement `uuid >= 11`.
+
+## Garde anti-régression (CI locale)
+
+- Script `audit:prod` = `npm audit --omit=dev --audit-level=high`.
+- Câblé dans le hook **`pre-push`** (Husky), à côté de `tsc` + `vitest`. Un push qui
+  réintroduirait une vuln **high/critical en PRODUCTION** échoue automatiquement ;
+  les vulns **dev** ne bloquent pas le push.
+
+## Passe sécurité — app web Next.js (S3.1)
+
+> Date : 2026-07-01. Nouvelle **surface d'audit distincte** : `web/` (app Next
+> déployée sur Vercel). Chaîne de PRODUCTION web = `next` + `react`/`react-dom` +
+> `firebase` (Web SDK client). Auditée séparément via `npm --prefix web run
+> audit:prod` (= `npm audit --omit=dev --audit-level=high`).
+
+### Résultat
+- **`audit:prod` web = 0 high/critical** → le gate passe (exit 0). Acceptation S3.1 tenue.
+- **Restant : 2 moderate** — `postcss <8.5.10` (GHSA-qx2v-qp2m-jg93 : XSS via `</style>`
+  non échappé dans la sortie *stringify* de PostCSS), tirés **uniquement** du postcss
+  **imbriqué de Next** : `node_modules/next/node_modules/postcss@8.4.31`.
+  (Notre propre devDep `postcss` résout déjà à `8.5.16`, patché, et hors chaîne prod.)
+
+### Décision
+- On est **déjà sur le dernier patch 15.x** (`next@15.5.19`). Le seul correctif proposé par
+  `npm audit fix --force` est `next@9.3.3` → **downgrade cassant**. **Non appliqué** (règle 4).
+- **Moderate, sous notre seuil high/critical.** Risque réel **quasi nul** : PostCSS ne traite,
+  au *build*, que **notre propre CSS** (`web/src/app/globals.css`) — aucune entrée CSS non
+  fiable, aucune exécution runtime côté client. Non exploitable dans notre usage.
+- **Option de remédiation disponible (NON appliquée, à décider)** : `override postcss ^8.5.10`
+  dans `web/package.json` — bump **mineur** (non-major), cohérent avec la méthodo S2.1 §3 et le
+  précédent `uuid`. Forcerait le postcss imbriqué de Next à la version patchée → audit prod web
+  à **0**. À valider par Déthié/l'architecte au besoin (le gate passe déjà sans).
+
+### Garde
+- Le hook `pre-push` (Husky) lance désormais aussi `npm --prefix web run audit:prod` : une
+  vuln **high/critical** réintroduite dans la chaîne prod web fait échouer le push. Les moderate
+  ci-dessus ne bloquent pas.
+
+## Évolution auth (Firestore)
+
+- **Aujourd'hui (prod)** : lecture autorisée si utilisateur Firebase authentifié **ET**
+  email vérifié (`email_verified == true`) **ET** email matchant la regex **ancrée**
+  `^[^@]+@medere[.]fr$` (domaine dans une fonction unique `isMedereUser()` de
+  `firestore.rules`). Écriture client interdite partout ; `_meta` inaccessible au client ;
+  **fail-closed** (deny par défaut).
+- **Durcissement futur (NON implémenté, prochaine étape tracée)** : remplacer/compléter le
+  filtre par domaine par une **allowlist explicite via custom claims Firebase**
+  (ex. claim `medereAccess == true` posé par une Cloud Function/Admin à la création du compte).
+  Avantages : révocation fine par utilisateur, support d'emails hors domaine si besoin,
+  indépendance vis-à-vis du libellé de domaine. À décider au sprint Auth (S4).

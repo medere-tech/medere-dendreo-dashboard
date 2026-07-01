@@ -1,0 +1,2 @@
+npm run typecheck && npm test && npm run audit:prod
+npm --prefix web run typecheck && npm --prefix web test && npm --prefix web run audit:prod
