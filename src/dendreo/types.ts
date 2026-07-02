@@ -40,45 +40,36 @@ export interface DendreoFichier {
 }
 
 // ---------------------------------------------------------------------------
-// Types DOMAINE (résultat consommé par S2/UI)
+// Types DOMAINE (résultat consommé par le miroir/UI)
+// RÈGLE : docs/signature-rule.md (fait autorité). Unité de suivi = l'ATTESTATION
+// (fichier signature dont le nom commence par "Attestation" + cible Participant).
+// Plus de notSent, plus de laps : on ne compte que ce que Dendreo a envoyé.
 // ---------------------------------------------------------------------------
-export interface SignedSignature {
+export type AttestationStatus = 'signed' | 'pending';
+
+/** Une attestation trackée (participant × session × doctype), après dédup. */
+export interface AttestationLine {
   idParticipant: string;
-  nom: string; // libellé d'affichage = `${prenom} ${nom}`
-  signatureDate: string; // ISO, garanti non vide
-  viewerUrl: string; // = public_url
+  nom: string; // libellé d'affichage = `${prenom} ${nom}` (interne, sanitisé en fixture)
+  doctypeId: string;
+  documentName: string; // = fichier.name (ex. "Attestation sur l'honneur PI_2026")
+  status: AttestationStatus;
+  signatureDate: string | null; // ISO naïf si signé, sinon null
+  sentDate: string | null; // = created_at normalisé (date d'envoi / ancienneté)
+  viewerUrl: string | null; // = public_url
 }
 
-export interface PendingSignature {
-  idParticipant: string;
-  nom: string;
-  sentDate: string; // = created_at (ancienneté → priorité de relance)
-  viewerUrl: string;
-}
-
-export interface NotSentParticipant {
-  idParticipant: string;
-  nom: string;
+/** Compteurs par session (cf. signature-rule.md §4). Invariant: signes+nonSignes==envoyes. */
+export interface SessionSignatureCounts {
+  envoyes: number; // nb d'attestations trackées envoyées
+  signes: number; // parmi envoyées, signées
+  nonSignes: number; // = envoyes - signes (à relancer)
+  participantsConcernes: number; // participants distincts avec ≥1 attestation
+  participantsARelancer: number; // participants distincts avec ≥1 attestation non signée
 }
 
 export interface SessionSignatureStatus {
   idAdf: string;
-  signed: SignedSignature[]; // signature_date présente
-  pending: PendingSignature[]; // fichier présent, signature_date vide (à relancer)
-  notSent: NotSentParticipant[]; // participant attendu sans aucun fichier de signature
-}
-
-/**
- * Règle « ce participant est-il ATTENDU pour le document suivi ? ».
- * Hypothèse temporaire (en attente de Justine) : tout inscrit est attendu.
- * Isolée ici pour pouvoir l'affiner (ex. filtrer sur un sous-module non connecté)
- * sans toucher au reste de la logique.
- */
-export type ExpectedParticipantRule = (lap: DendreoLap) => boolean;
-
-export interface SignatureStatusOptions {
-  /** doctype_id du document suivi. Défaut: Convention "111". */
-  doctypeId?: string;
-  /** Règle d'éligibilité « attendu ». Défaut: tout inscrit est attendu. */
-  isExpected?: ExpectedParticipantRule;
+  attestations: AttestationLine[];
+  counts: SessionSignatureCounts;
 }

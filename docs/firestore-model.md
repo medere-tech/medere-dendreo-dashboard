@@ -7,44 +7,42 @@
 
 ## 1. Collections
 
+> ⚠️ **Modèle signature à jour : `docs/signature-rule.md`.** Les compteurs et statuts ci-dessous sont
+> remplacés par le modèle attestation (envoyés/signés/non-signés), sans `notSent`.
+
 ### `sessions/{idAdf}`
 Une session de formation + son agrégat de signatures (pour la vue transverse et le tri).
 ```
 {
-  idAdf: string,
-  numeroComplet: string,          // "ADF_2026xxxx"
-  intitule: string,
-  dateDebut: string,              // ISO
-  dateFin: string,                // ISO
-  idEtapeProcess: string,
-  etape: string,                  // libellé ("Réalisation"...)
-  idCentre: string,
-  type: string,                   // "inter"
-  totalParticipants: number,
-  counts: { signed: number, pending: number, notSent: number },
-  oldestPendingSentDate: string | null,  // pour trier par urgence (plus vieux en attente)
-  lastSyncedAt: string,           // ISO
-  source: "dendreo"
+  idAdf, numeroComplet, intitule, dateDebut, dateFin, idEtapeProcess, etape,
+  idCentre, type, totalParticipants,
+  numeroSessionDpc: string,            // 26.001 (toujours présent)
+  numeroCompteProduit: string | null,  // 92622... (optionnel)
+  counts: {                            // cf. signature-rule.md §4
+    envoyes: number,
+    signes: number,
+    nonSignes: number,                 // = envoyes - signes (à relancer)
+    participantsConcernes: number,
+    participantsARelancer: number
+  },
+  oldestPendingSentDate: string | null,
+  lastSyncedAt, source: "dendreo"
 }
 ```
 
 ### `signatures/{idAdf}_{idParticipant}_{doctypeId}`
-Une ligne par participant × session × document. **Source de la vue « à relancer » transverse.**
+Une ligne par **attestation** (participant × session × doctype). Source de la vue « à relancer ».
 ```
 {
-  idAdf: string,
-  idParticipant: string,
-  doctypeId: string,              // "111" (Convention) par défaut
-  nom: string,                    // nom d'affichage (interne, accès protégé)
-  status: "signed" | "pending" | "notSent",
-  signatureDate: string | null,   // si signed
-  sentDate: string | null,        // si pending (date d'envoi → ancienneté)
+  idAdf, idParticipant, doctypeId,
+  documentName: string,                // nom du document (commence par "Attestation")
+  nom: string,                         // affichage, interne, accès protégé
+  status: "signed" | "pending",        // plus de "notSent"
+  signatureDate: string | null,
+  sentDate: string | null,
   viewerUrl: string | null,
-  // dénormalisé pour éviter les jointures dans la vue transverse :
-  sessionNumeroComplet: string,
-  sessionIntitule: string,
-  sessionDateDebut: string,
-  lastSyncedAt: string
+  sessionNumeroComplet, sessionIntitule, sessionDateDebut,
+  lastSyncedAt
 }
 ```
 

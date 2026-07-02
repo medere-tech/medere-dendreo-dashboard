@@ -26,6 +26,8 @@ async function clear(collection: string): Promise<void> {
 const session = (idAdf: string): SessionUpsertInput => ({
   idAdf,
   numeroComplet: `ADF_${idAdf}`,
+  numeroSessionDpc: '26.001',
+  numeroCompteProduit: null,
   intitule: 'Session test',
   dateDebut: '2026-01-01T00:00:00.000Z',
   dateFin: '2026-06-30T00:00:00.000Z',
@@ -39,11 +41,12 @@ const session = (idAdf: string): SessionUpsertInput => ({
 const sig = (idAdf: string, idParticipant: string, over: Partial<SignatureUpsertInput>): SignatureUpsertInput => ({
   idAdf,
   idParticipant,
-  doctypeId: '111',
+  doctypeId: '177',
+  documentName: 'Attestation test',
   nom: 'Prenom Nom',
-  status: 'notSent',
+  status: 'pending',
   signatureDate: null,
-  sentDate: null,
+  sentDate: '2026-03-01T00:00:00.000Z',
   viewerUrl: null,
   sessionNumeroComplet: `ADF_${idAdf}`,
   sessionIntitule: 'Session test',
@@ -64,6 +67,8 @@ onEmu('couche Firestore (émulateur)', () => {
 
     const s = await getSession('T1');
     expect(s?.numeroComplet).toBe('ADF_T1');
+    expect(s?.numeroSessionDpc).toBe('26.001');
+    expect(s?.numeroCompteProduit).toBeNull();
     expect(s?.source).toBe('dendreo');
     expect(typeof s?.lastSyncedAt).toBe('string');
 
@@ -80,24 +85,25 @@ onEmu('couche Firestore (émulateur)', () => {
 
     const all = await getDb().collection('signatures').get();
     expect(all.size).toBe(1);
-    const doc = await getDb().collection('signatures').doc(signatureKey('T1', 'p1', '111')).get();
+    const doc = await getDb().collection('signatures').doc(signatureKey('T1', 'p1', '177')).get();
     expect(doc.get('nom')).toBe('Maj Nom');
   });
 
-  it('recalcSessionCounts (transaction) recompte counts + oldestPendingSentDate', async () => {
+  it('recalcSessionCounts (transaction) recompte les 5 compteurs + oldestPendingSentDate', async () => {
     await upsertSession(session('T2'));
-    await upsertSignature(sig('T2', 'a', { status: 'signed', signatureDate: '2026-02-10T00:00:00.000Z' }));
-    await upsertSignature(sig('T2', 'b', { status: 'signed', signatureDate: '2026-02-11T00:00:00.000Z' }));
-    await upsertSignature(sig('T2', 'c', { status: 'pending', sentDate: '2026-03-20T00:00:00.000Z' }));
-    await upsertSignature(sig('T2', 'd', { status: 'pending', sentDate: '2026-03-05T00:00:00.000Z' }));
-    await upsertSignature(sig('T2', 'e', { status: 'notSent' }));
+    // participant "c" a DEUX attestations (doctypes différents) → 1 seul participant concerné.
+    await upsertSignature(sig('T2', 'a', { status: 'signed', signatureDate: '2026-02-10T00:00:00.000Z', doctypeId: '177' }));
+    await upsertSignature(sig('T2', 'b', { status: 'signed', signatureDate: '2026-02-11T00:00:00.000Z', doctypeId: '177' }));
+    await upsertSignature(sig('T2', 'c', { status: 'pending', sentDate: '2026-03-20T00:00:00.000Z', doctypeId: '177' }));
+    await upsertSignature(sig('T2', 'c', { status: 'pending', sentDate: '2026-03-05T00:00:00.000Z', doctypeId: '165' }));
 
+    const expected = { envoyes: 4, signes: 2, nonSignes: 2, participantsConcernes: 3, participantsARelancer: 1 };
     const res = await recalcSessionCounts('T2');
-    expect(res.counts).toEqual({ signed: 2, pending: 2, notSent: 1 });
+    expect(res.counts).toEqual(expected);
     expect(res.oldestPendingSentDate).toBe('2026-03-05T00:00:00.000Z'); // le plus ancien pending
 
     const s = await getSession('T2');
-    expect(s?.counts).toEqual({ signed: 2, pending: 2, notSent: 1 });
+    expect(s?.counts).toEqual(expected);
     expect(s?.oldestPendingSentDate).toBe('2026-03-05T00:00:00.000Z');
   });
 

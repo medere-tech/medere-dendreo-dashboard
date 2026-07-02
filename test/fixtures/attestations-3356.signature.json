@@ -1,0 +1,128 @@
+[
+  {
+    "id": "f1",
+    "collection_name": "signature",
+    "name": "LettredeMission_Form_formation_Medere",
+    "doctype_id": "79",
+    "signature_date": "2025-11-23T13:42:27.000000Z",
+    "created_at": "2025-11-22T23:01:49.000000Z",
+    "cible": "action-de-formation",
+    "id_cible": "3356",
+    "public_url": "https://extranet.example/viewer/p1/79",
+    "entite_liee": {
+      "Formateur": {
+        "id_participant": "p1",
+        "prenom": "L.",
+        "nom": "M."
+      }
+    }
+  },
+  {
+    "id": "f2",
+    "collection_name": "signature",
+    "name": "Attestation sur l'honneur PI_2026",
+    "doctype_id": "177",
+    "signature_date": "2026-06-29T13:25:06.000000Z",
+    "created_at": "2026-06-29T12:52:30.000000Z",
+    "cible": "action-de-formation",
+    "id_cible": "3356",
+    "public_url": "https://extranet.example/viewer/p2/177",
+    "entite_liee": {
+      "Participant": {
+        "id_participant": "p2",
+        "prenom": "V.",
+        "nom": "D."
+      }
+    }
+  },
+  {
+    "id": "f3",
+    "collection_name": "signature",
+    "name": "Attestation sur l'honneur PI_2026",
+    "doctype_id": "177",
+    "signature_date": "2026-06-29T12:55:16.000000Z",
+    "created_at": "2026-06-29T12:52:46.000000Z",
+    "cible": "action-de-formation",
+    "id_cible": "3356",
+    "public_url": "https://extranet.example/viewer/p3/177",
+    "entite_liee": {
+      "Participant": {
+        "id_participant": "p3",
+        "prenom": "C.",
+        "nom": "R."
+      }
+    }
+  },
+  {
+    "id": "f4",
+    "collection_name": "signature",
+    "name": "Attestation sur l'honneur PI_2026",
+    "doctype_id": "177",
+    "signature_date": "2026-06-29T12:56:01.000000Z",
+    "created_at": "2026-06-29T12:52:58.000000Z",
+    "cible": "action-de-formation",
+    "id_cible": "3356",
+    "public_url": "https://extranet.example/viewer/p4/177",
+    "entite_liee": {
+      "Participant": {
+        "id_participant": "p4",
+        "prenom": "T.",
+        "nom": "N."
+      }
+    }
+  },
+  {
+    "id": "f5",
+    "collection_name": "signature",
+    "name": "Attestation sur l'honneur PI_2026",
+    "doctype_id": "177",
+    "signature_date": "2026-06-29T13:16:06.000000Z",
+    "created_at": "2026-06-29T12:53:50.000000Z",
+    "cible": "action-de-formation",
+    "id_cible": "3356",
+    "public_url": "https://extranet.example/viewer/p5/177",
+    "entite_liee": {
+      "Participant": {
+        "id_participant": "p5",
+        "prenom": "K.",
+        "nom": "H."
+      }
+    }
+  },
+  {
+    "id": "f6",
+    "collection_name": "signature",
+    "name": "Attestation sur l'honneur PI_2026",
+    "doctype_id": "177",
+    "signature_date": "",
+    "created_at": "2026-06-29T12:54:00.000000Z",
+    "cible": "action-de-formation",
+    "id_cible": "3356",
+    "public_url": "https://extranet.example/viewer/p6/177",
+    "entite_liee": {
+      "Participant": {
+        "id_participant": "p6",
+        "prenom": "G.",
+        "nom": "D."
+      }
+    }
+  },
+  {
+    "id": "f7",
+    "collection_name": "signature",
+    "name": "Attestation sur l'honneur PI_2026",
+    "doctype_id": "177",
+    "signature_date": "2026-06-30T18:50:16.000000Z",
+    "created_at": "2026-06-29T12:54:36.000000Z",
+    "cible": "action-de-formation",
+    "id_cible": "3356",
+    "public_url": "https://extranet.example/viewer/p7/177",
+    "entite_liee": {
+      "Participant": {
+        "id_participant": "p7",
+        "prenom": "D.",
+        "nom": "S."
+      }
+    }
+  }
+]

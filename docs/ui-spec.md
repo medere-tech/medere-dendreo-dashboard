@@ -34,8 +34,18 @@
 
 ### 4.1 Accueil — vue transverse « Sessions » (le cockpit)
 Tableau premium de toutes les sessions **2025+**. Colonnes (socle garanti ; le reste selon cahier Justine) :
-`N° session DPC (26.001)` · `N° compte produit (92622525478)` · `Intitulé` · `Début` · `Fin` · `Étape` · `Centre` · `Nb participants` · bloc **Signatures** (Signés / À relancer / [Pas encore envoyé si applicable], orange sur « à relancer »).
-Fonctions : **recherche instantanée** (tous champs) · **filtres** (période, étape, « a des relances ») · **tri** (colonnes + tri **urgence** par défaut : plus d'à-relancer en haut) · **pagination premium** (taille de page, navigation fluide, compteur « 1-25 sur N »).
+`N° session DPC (26.001)` · `N° compte produit (92622525478)` · `Intitulé` · `Début` · `Fin` · `Étape` · `Nb participants` · bloc **Signatures**.
+
+**Bloc Signatures (cf. `docs/signature-rule.md`)** : trois chiffres **aérés, jamais tassés/superposés** — **Envoyés** · **Signés** (neutre) · **À relancer** (orange si > 0) — + le nombre de **participants concernés**. Chaque chiffre est **cliquable** → ouvre le drawer (§4.5).
+
+Fonctions : **recherche instantanée** (tous champs) · **filtres** (période, étape, « a des relances ») · **tri** (colonnes + tri **urgence** par défaut : plus d'à-relancer en haut) · **pagination premium** (« 1-25 sur N »).
+
+### 4.5 Drawer « clic → liste » (fonctionnalité premium, demandée par Justine)
+Un clic sur un compteur (Envoyés / Signés / À relancer) d'une session ouvre un **panneau glissant** listant les participants concernés par ce chiffre :
+- **Signés** → participant · date de signature · lien de visualisation.
+- **À relancer** → participant · depuis quand · **lien direct de relance**.
+- **Envoyés** → tous les destinataires.
+Premium : slide-in fluide, **aucun rechargement**, recherche dans la liste, lien direct par ligne, fermeture au clavier (**Échap**) + clic hors panneau. C'est le geste quotidien ops/CSM.
 
 ### 4.2 Vue transverse « À relancer » (la valeur n°1)
 Liste de **tous les participants à relancer**, toutes sessions, **triée par ancienneté** (plus vieux d'abord). Colonnes : participant · session (n° + intitulé) · date d'envoi · ancienneté · **lien de visualisation direct**. Recherche + filtre (session / période).

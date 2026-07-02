@@ -1,17 +1,22 @@
 // src/firebase/types.ts — Modèle Firestore typé (conforme à docs/firestore-model.md).
 
-export type SignatureStatus = 'signed' | 'pending' | 'notSent';
+export type SignatureStatus = 'signed' | 'pending';
 
+/** Compteurs par session (cf. docs/signature-rule.md §4). Invariant: signes+nonSignes==envoyes. */
 export interface Counts {
-  signed: number;
-  pending: number;
-  notSent: number;
+  envoyes: number;
+  signes: number;
+  nonSignes: number;
+  participantsConcernes: number;
+  participantsARelancer: number;
 }
 
 /** Document `sessions/{idAdf}`. */
 export interface SessionDoc {
   idAdf: string;
   numeroComplet: string;
+  numeroSessionDpc: string; // "26.001" — N° de session DPC (Dendreo: num_session_dpc, toujours présent)
+  numeroCompteProduit: string | null; // "92622626015" — N° compte produit / action DPC (Dendreo: numero_comptable, optionnel)
   intitule: string;
   dateDebut: string;
   dateFin: string;
@@ -26,13 +31,14 @@ export interface SessionDoc {
   source: 'dendreo';
 }
 
-/** Document `signatures/{idAdf}_{idParticipant}_{doctypeId}`. */
+/** Document `signatures/{idAdf}_{idParticipant}_{doctypeId}` (une ATTESTATION). */
 export interface SignatureDoc {
   idAdf: string;
   idParticipant: string;
   doctypeId: string;
+  documentName: string; // nom du document (commence par "Attestation")
   nom: string;
-  status: SignatureStatus;
+  status: SignatureStatus; // "signed" | "pending" (plus de "notSent")
   signatureDate: string | null;
   sentDate: string | null;
   viewerUrl: string | null;

@@ -1,179 +1,139 @@
-// test/signatures.test.ts — Tests déterministes sur fixtures S0 réelles (sanitisées).
-// Aucun appel réseau : on alimente la fonction PURE avec les JSON capturés.
+// test/signatures.test.ts — Règle ATTESTATION (docs/signature-rule.md) sur fixture
+// RÉELLE sanitisée + cas synthétiques. Aucun appel réseau : fonction PURE.
 
 import { readFileSync } from 'node:fs';
 import { describe, it, expect } from 'vitest';
-import { computeSignatureStatus } from '../src/dendreo/signatures';
-import type { DendreoFichier, DendreoLap } from '../src/dendreo/types';
+import { computeSignatureStatus, isTrackedAttestation, normalizeDocName } from '../src/dendreo/signatures';
+import type { DendreoFichier } from '../src/dendreo/types';
 
 function loadFixture<T>(name: string): T {
   const url = new URL(`./fixtures/${name}`, import.meta.url);
   return JSON.parse(readFileSync(url, 'utf8')) as T;
 }
 
-const f3686 = loadFixture<DendreoFichier[]>('fichiers-3686.signature.json');
-const f3894 = loadFixture<DendreoFichier[]>('fichiers-3894.signature.json');
-const laps3894 = loadFixture<DendreoLap[]>('laps-3894.json');
+/** Fabrique un fichier signature de test (défauts = attestation Participant en attente). */
+function mkFichier(over: Partial<DendreoFichier> & { name: string }): DendreoFichier {
+  return {
+    id: over.id ?? 'x',
+    collection_name: over.collection_name ?? 'signature',
+    name: over.name,
+    doctype_id: over.doctype_id ?? '177',
+    signature_date: over.signature_date ?? '',
+    created_at: over.created_at ?? '2026-01-01T00:00:00.000000Z',
+    cible: over.cible ?? 'action-de-formation',
+    id_cible: over.id_cible ?? '999',
+    public_url: over.public_url ?? 'https://extranet.example/viewer/x',
+    entite_liee:
+      over.entite_liee !== undefined ? over.entite_liee : { Participant: { id_participant: 'p1', prenom: 'A', nom: 'B' } },
+  };
+}
+const participant = (id: string) => ({ Participant: { id_participant: id, prenom: 'A', nom: 'B' } });
 
-describe('fixture 3686 — sanity (témoin S0 brut)', () => {
-  it('contient 20 docs : 14 signés (signature_date remplie) / 6 en attente', () => {
-    expect(f3686).toHaveLength(20);
-    const signed = f3686.filter((x) => x.signature_date.trim() !== '');
-    const empty = f3686.filter((x) => x.signature_date.trim() === '');
-    expect(signed).toHaveLength(14);
-    expect(empty).toHaveLength(6);
+// ---------------------------------------------------------------------------
+describe('normalizeDocName / isTrackedAttestation', () => {
+  it('normalise (minuscules + sans accents + trim)', () => {
+    expect(normalizeDocName("  Attestation sur l'honneur PI_2026 ")).toBe("attestation sur l'honneur pi_2026");
+  });
+  it('tracke un nom commençant par "Attestation" ciblant un Participant', () => {
+    expect(isTrackedAttestation(mkFichier({ name: 'Attestation EPP amont' }))).toBe(true);
+  });
+  it('exclut Convention (ne commence pas par attestation)', () => {
+    expect(isTrackedAttestation(mkFichier({ name: 'Convention_Participant_Formation_Médéré' }))).toBe(false);
+  });
+  it('exclut une "Attestation" ciblant un Formateur', () => {
+    expect(
+      isTrackedAttestation(mkFichier({ name: 'Attestation X', entite_liee: { Formateur: { id_participant: 'f1' } } })),
+    ).toBe(false);
   });
 });
 
-describe('computeSignatureStatus(3686) — après filtre Formateur + doctype + dédup', () => {
-  const res = computeSignatureStatus('3686', f3686);
+// ---------------------------------------------------------------------------
+describe('fixture RÉELLE ADF_20250540 (idAdf 3356) — oracle §6 : 6 / 5 / 1', () => {
+  const fichiers = loadFixture<DendreoFichier[]>('attestations-3356.signature.json');
+  const res = computeSignatureStatus('3356', fichiers);
 
-  it('renvoie 11 signés / 5 en attente', () => {
-    expect(res.signed).toHaveLength(11);
-    expect(res.pending).toHaveLength(5);
+  it('la fixture contient 7 docs (1 LettredeMission Formateur + 6 attestations)', () => {
+    expect(fichiers).toHaveLength(7);
   });
 
-  it('exclut le doc Formateur (doctype 79)', () => {
-    const all = [...res.signed, ...res.pending];
-    // le formateur n'a pas d'id_participant → absent du résultat
-    expect(all.every((s) => s.idParticipant && s.idParticipant.length > 0)).toBe(true);
-    // 14 signés bruts - 1 formateur signé - 2 doublons signés = 11
-    expect(all).toHaveLength(16);
+  it('compteurs = oracle 6/5/1 + participants 6/1', () => {
+    expect(res.counts).toEqual({
+      envoyes: 6,
+      signes: 5,
+      nonSignes: 1,
+      participantsConcernes: 6,
+      participantsARelancer: 1,
+    });
   });
 
-  it('ne contient aucun participant en double (dédup participant×session×doctype)', () => {
-    const ids = [...res.signed, ...res.pending].map((s) => s.idParticipant);
-    expect(new Set(ids).size).toBe(ids.length);
+  it('invariant signes + nonSignes == envoyes', () => {
+    expect(res.counts.signes + res.counts.nonSignes).toBe(res.counts.envoyes);
   });
 
-  it('garde le doc SIGNÉ le plus récent pour un participant signé 2× (450439 → 2026-04-12)', () => {
-    const a = res.signed.find((s) => s.idParticipant === '450439');
-    expect(a?.signatureDate).toBe('2026-04-12T07:02:39.000000Z');
+  it('exclut le doc Formateur (doctype 79 / LettredeMission)', () => {
+    expect(res.attestations).toHaveLength(6);
+    expect(res.attestations.every((a) => a.doctypeId === '177')).toBe(true);
+    expect(res.attestations.every((a) => normalizeDocName(a.documentName).startsWith('attestation'))).toBe(true);
+    expect(res.attestations.some((a) => a.idParticipant === 'p1')).toBe(false); // p1 = le formateur
   });
 
-  it('garde le doc EN ATTENTE le plus récent pour un participant en attente 2× (451171 → 2026-04-07)', () => {
-    const jw = res.pending.find((s) => s.idParticipant === '451171');
-    expect(jw?.sentDate).toBe('2026-04-07T16:44:10.000000Z');
-  });
-
-  it('un participant signé 2× ne reste pas en attente (450439 absent de pending)', () => {
-    expect(res.pending.some((s) => s.idParticipant === '450439')).toBe(false);
-  });
-
-  it('compose le nom = `prenom nom`', () => {
-    const cd = res.signed.find((s) => s.idParticipant === '455004');
-    expect(cd?.nom).toBe('Prenom455004 NOM455004');
-  });
-
-  it('expose le viewerUrl (public_url) sur chaque entrée', () => {
-    expect([...res.signed, ...res.pending].every((s) => s.viewerUrl.startsWith('https://'))).toBe(true);
-  });
-
-  it('trie les "en attente" du plus ancien au plus récent (priorité de relance)', () => {
-    const dates = res.pending.map((s) => Date.parse(s.sentDate));
-    const sorted = [...dates].sort((a, b) => a - b);
-    expect(dates).toEqual(sorted);
+  it('les signées ont une signatureDate ; la seule pending a signatureDate null + sentDate présent', () => {
+    const signed = res.attestations.filter((a) => a.status === 'signed');
+    const pending = res.attestations.filter((a) => a.status === 'pending');
+    expect(signed).toHaveLength(5);
+    expect(signed.every((a) => a.signatureDate && a.viewerUrl)).toBe(true);
+    expect(pending).toHaveLength(1);
+    expect(pending[0]?.signatureDate).toBeNull();
+    expect(typeof pending[0]?.sentDate).toBe('string');
   });
 });
 
-describe('computeSignatureStatus(3894) — tous signés, laps réels', () => {
-  const res = computeSignatureStatus('3894', f3894, laps3894);
-  it('renvoie 3 signés / 0 en attente / 0 notSent (les 3 inscrits ont signé)', () => {
-    expect(res.signed).toHaveLength(3);
-    expect(res.pending).toHaveLength(0);
-    expect(res.notSent).toHaveLength(0);
-    expect(new Set(res.signed.map((s) => s.idParticipant)).size).toBe(3);
+// ---------------------------------------------------------------------------
+describe('dédup (idAdf, idParticipant, doctypeId) — garde le signé', () => {
+  it('même participant × doctype, un signé + un en attente → 1 ligne signée', () => {
+    const res = computeSignatureStatus('S', [
+      mkFichier({ name: 'Attestation PI', entite_liee: participant('p9'), doctype_id: '177', signature_date: '' }),
+      mkFichier({ name: 'Attestation PI', entite_liee: participant('p9'), doctype_id: '177', signature_date: '2026-05-01T10:00:00.000000Z' }),
+    ]);
+    expect(res.counts.envoyes).toBe(1);
+    expect(res.attestations).toHaveLength(1);
+    expect(res.attestations[0]?.status).toBe('signed');
+  });
+
+  it('doublon même statut → garde le created_at le plus récent', () => {
+    const res = computeSignatureStatus('S', [
+      mkFichier({ name: 'Attestation PI', entite_liee: participant('p9'), created_at: '2026-04-01T00:00:00.000000Z' }),
+      mkFichier({ name: 'Attestation PI', entite_liee: participant('p9'), created_at: '2026-04-09T00:00:00.000000Z' }),
+    ]);
+    expect(res.attestations).toHaveLength(1);
+    expect(res.attestations[0]?.sentDate).toBe('2026-04-09T00:00:00.000000Z');
   });
 });
 
-describe('notSent — diff laps ↔ fichiers [test unitaire de la règle de diff]', () => {
-  // Cas RÉEL : test/fixtures/laps-3686.json (capture read-only via scripts/capture-laps-3686.mjs).
-  // En attendant cette capture, test unitaire déterministe : les 16 participants réels de
-  // 3686 (qui ont un doc) + 2 inscrits SYNTHÉTIQUES actifs sans doc (900001/900002) → notSent = ces 2.
-  const enrolledIds = [
-    ...new Set(
-      f3686
-        .filter((x) => x.doctype_id === '111')
-        .map((x) => x.entite_liee?.Participant?.id_participant)
-        .filter((id): id is string => Boolean(id)),
-    ),
-  ];
-  const mkLap = (id: string): DendreoLap => ({
-    id_participant: id, status: '1', lap_status_id: '2',
-    participant: { id_participant: id, nom: `NOM${id}`, prenom: `Prenom${id}` },
-  });
-  const laps3686: DendreoLap[] = [...enrolledIds.map(mkLap), mkLap('900001'), mkLap('900002')];
-  const res = computeSignatureStatus('3686', f3686, laps3686);
-
-  it('classe en notSent uniquement les inscrits actifs/identifiés sans aucun fichier', () => {
-    expect(res.notSent.map((p) => p.idParticipant).sort()).toEqual(['900001', '900002']);
-  });
-
-  it('ne touche pas signed/pending (11/5) et ne reclasse pas un inscrit ayant un doc', () => {
-    expect(res.signed).toHaveLength(11);
-    expect(res.pending).toHaveLength(5);
-    const withFile = new Set([...res.signed, ...res.pending].map((s) => s.idParticipant));
-    for (const ns of res.notSent) expect(withFile.has(ns.idParticipant)).toBe(false);
-  });
-
-  it('compose le nom des notSent = `prenom nom`', () => {
-    expect(res.notSent.find((p) => p.idParticipant === '900001')?.nom).toBe('Prenom900001 NOM900001');
-  });
-
-  it('sans laps, notSent est vide (rétro-compatible)', () => {
-    expect(computeSignatureStatus('3686', f3686).notSent).toHaveLength(0);
+// ---------------------------------------------------------------------------
+describe('granularité PAR attestation (pas par participant)', () => {
+  it('même participant : signé sur un module, à relancer sur un autre → 2 lignes, 1 concerné, 1 à relancer', () => {
+    const res = computeSignatureStatus('S', [
+      mkFichier({ name: 'Attestation EPP amont', entite_liee: participant('p1'), doctype_id: '165', signature_date: '2026-05-01T10:00:00.000000Z' }),
+      mkFichier({ name: 'Attestation EPP aval', entite_liee: participant('p1'), doctype_id: '166', signature_date: '' }),
+    ]);
+    expect(res.counts).toEqual({
+      envoyes: 2,
+      signes: 1,
+      nonSignes: 1,
+      participantsConcernes: 1,
+      participantsARelancer: 1,
+    });
   });
 });
 
-describe('règle "attendu" par défaut — exclut non identifiés et inscriptions non actives', () => {
-  const base = (over: Partial<DendreoLap>): DendreoLap => ({ status: '1', participant: { nom: 'X', prenom: 'Y' }, ...over });
-
-  it('exclut les participants non identifiés (id absent / "" / "0")', () => {
-    const laps: DendreoLap[] = [
-      base({ id_participant: '', participant: { id_participant: '', nom: 'A', prenom: 'A' } }),
-      base({ id_participant: '0', participant: { id_participant: '0', nom: 'B', prenom: 'B' } }),
-      base({ participant: { nom: 'C', prenom: 'C' } }),
-    ];
-    expect(computeSignatureStatus('3686', f3686, laps).notSent).toHaveLength(0);
-  });
-
-  it('exclut les inscriptions non actives (status != "1")', () => {
-    const laps: DendreoLap[] = [
-      base({ id_participant: '900003', status: '2', participant: { id_participant: '900003', nom: 'D', prenom: 'D' } }),
-      base({ id_participant: '900004', status: undefined, participant: { id_participant: '900004', nom: 'E', prenom: 'E' } }),
-    ];
-    expect(computeSignatureStatus('3686', f3686, laps).notSent).toHaveLength(0);
-  });
-
-  it('garde un inscrit identifié ET actif sans doc', () => {
-    const laps: DendreoLap[] = [
-      base({ id_participant: '900005', status: '1', participant: { id_participant: '900005', nom: 'F', prenom: 'F' } }),
-    ];
-    expect(computeSignatureStatus('3686', f3686, laps).notSent.map((p) => p.idParticipant)).toEqual(['900005']);
-  });
-});
-
-describe('option isExpected — surcharge de la règle par défaut', () => {
-  it('une règle custom remplace la règle par défaut (ici on accepte les non actifs)', () => {
-    const laps: DendreoLap[] = [
-      { id_participant: '900001', status: '2', participant: { id_participant: '900001', nom: 'A', prenom: 'A' } },
-      { id_participant: '900002', status: '1', participant: { id_participant: '900002', nom: 'B', prenom: 'B' } },
-    ];
-    const res = computeSignatureStatus('3686', f3686, laps, { isExpected: () => true });
-    expect(res.notSent.map((p) => p.idParticipant).sort()).toEqual(['900001', '900002']);
-  });
-});
-
-describe('option doctypeId', () => {
-  it('un doctype inexistant ne matche rien', () => {
-    const res = computeSignatureStatus('3686', f3686, [], { doctypeId: '999' });
-    expect(res.signed).toHaveLength(0);
-    expect(res.pending).toHaveLength(0);
-  });
-
-  it('le doctype Formateur (79) ne ramène pas de Participant (entite_liee.Participant absent)', () => {
-    const res = computeSignatureStatus('3686', f3686, [], { doctypeId: '79' });
-    expect(res.signed).toHaveLength(0);
-    expect(res.pending).toHaveLength(0);
+// ---------------------------------------------------------------------------
+describe('filtre : rien à suivre', () => {
+  it('aucune attestation (que des Conventions) → compteurs à zéro', () => {
+    const res = computeSignatureStatus('S', [
+      mkFichier({ name: 'Convention_Participant_Formation_Médéré', doctype_id: '111', signature_date: '2026-05-01T10:00:00.000000Z' }),
+    ]);
+    expect(res.attestations).toHaveLength(0);
+    expect(res.counts).toEqual({ envoyes: 0, signes: 0, nonSignes: 0, participantsConcernes: 0, participantsARelancer: 0 });
   });
 });

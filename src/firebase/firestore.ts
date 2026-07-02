@@ -16,7 +16,7 @@ import type {
 
 const SESSIONS = 'sessions';
 const SIGNATURES = 'signatures';
-const STATUSES: readonly SignatureStatus[] = ['signed', 'pending', 'notSent'];
+const STATUSES: readonly SignatureStatus[] = ['signed', 'pending'];
 
 const nowIso = (): string => new Date().toISOString();
 
@@ -31,12 +31,14 @@ function assertNullableString(v: unknown, name: string): asserts v is string | n
   if (v !== null && typeof v !== 'string') throw new Error(`Champ doit être string|null : ${name}`);
 }
 function assertStatus(v: unknown): asserts v is SignatureStatus {
-  if (typeof v !== 'string' || !STATUSES.includes(v as SignatureStatus)) throw new Error(`status invalide (attendu signed|pending|notSent) : ${String(v)}`);
+  if (typeof v !== 'string' || !STATUSES.includes(v as SignatureStatus)) throw new Error(`status invalide (attendu signed|pending) : ${String(v)}`);
 }
 
 function validateSessionInput(s: SessionUpsertInput): void {
   assertString(s.idAdf, 'idAdf');
   assertString(s.numeroComplet, 'numeroComplet');
+  assertString(s.numeroSessionDpc, 'numeroSessionDpc');
+  assertNullableString(s.numeroCompteProduit, 'numeroCompteProduit');
   assertString(s.intitule, 'intitule');
   assertString(s.dateDebut, 'dateDebut');
   assertString(s.dateFin, 'dateFin');
@@ -51,6 +53,7 @@ function validateSignatureInput(s: SignatureUpsertInput): void {
   assertString(s.idAdf, 'idAdf');
   assertString(s.idParticipant, 'idParticipant');
   assertString(s.doctypeId, 'doctypeId');
+  assertString(s.documentName, 'documentName');
   assertString(s.nom, 'nom');
   assertString(s.sessionNumeroComplet, 'sessionNumeroComplet');
   assertString(s.sessionIntitule, 'sessionIntitule');
@@ -62,7 +65,6 @@ function validateSignatureInput(s: SignatureUpsertInput): void {
   // cohérence statut <-> dates
   if (s.status === 'signed' && !s.signatureDate) throw new Error('Incohérence : status=signed sans signatureDate');
   if (s.status === 'pending' && !s.sentDate) throw new Error('Incohérence : status=pending sans sentDate');
-  if (s.status === 'notSent' && (s.signatureDate || s.sentDate)) throw new Error('Incohérence : status=notSent avec une date');
 }
 
 // --- Upserts (merge → idempotents, last-write-wins) --------------------------
@@ -111,21 +113,35 @@ export async function recalcSessionCounts(idAdf: string): Promise<{ counts: Coun
 
   return db.runTransaction(async (tx) => {
     const snap = await tx.get(sigQuery);
-    const counts: Counts = { signed: 0, pending: 0, notSent: 0 };
+    // Une ligne signatures = une attestation. Compteurs = docs.signature-rule.md §4.
+    let signes = 0;
+    const concernes = new Set<string>();
+    const aRelancer = new Set<string>();
     let oldestPendingSentDate: string | null = null;
 
     snap.forEach((doc) => {
       const status = doc.get('status') as SignatureStatus;
-      if (status === 'signed') counts.signed += 1;
-      else if (status === 'notSent') counts.notSent += 1;
-      else if (status === 'pending') {
-        counts.pending += 1;
+      const idParticipant = String(doc.get('idParticipant') ?? '');
+      if (idParticipant) concernes.add(idParticipant);
+      if (status === 'signed') {
+        signes += 1;
+      } else if (status === 'pending') {
+        if (idParticipant) aRelancer.add(idParticipant);
         const sd = doc.get('sentDate');
         if (typeof sd === 'string' && (oldestPendingSentDate === null || sd < oldestPendingSentDate)) {
           oldestPendingSentDate = sd; // ISO → comparaison lexicographique = chronologique
         }
       }
     });
+
+    const envoyes = snap.size;
+    const counts: Counts = {
+      envoyes,
+      signes,
+      nonSignes: envoyes - signes,
+      participantsConcernes: concernes.size,
+      participantsARelancer: aRelancer.size,
+    };
 
     tx.set(sessionRef, { counts, oldestPendingSentDate, lastSyncedAt: nowIso() }, { merge: true });
     return { counts, oldestPendingSentDate };

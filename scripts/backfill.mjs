@@ -88,9 +88,14 @@ let etapesMap = new Map();
 function mapSession(s) {
   const id = String(s.id_action_de_formation);
   const idEtape = String(s.id_etape_process ?? '');
+  // N° compte produit : optionnel côté Dendreo → null si vide/absent (jamais '' stocké).
+  const compteRaw = s.numero_comptable == null ? '' : String(s.numero_comptable).trim();
+  const numeroCompteProduit = compteRaw === '' ? null : compteRaw;
   return {
     idAdf: id,
     numeroComplet: s.numero_complet ?? `ADF_${id}`,
+    numeroSessionDpc: s.num_session_dpc == null ? '' : String(s.num_session_dpc).trim(),
+    numeroCompteProduit,
     intitule: s.intitule ?? '(sans intitulé)',
     dateDebut: normDate(s.date_debut),
     dateFin: normDate(s.date_fin),
@@ -102,16 +107,18 @@ function mapSession(s) {
   };
 }
 
-function mapSig(entry, status, session) {
+// entry = AttestationLine (dates déjà normalisées ISO|null par signatures.ts).
+function mapSig(a, session) {
   return {
     idAdf: session.idAdf,
-    idParticipant: String(entry.idParticipant),
-    doctypeId: DENDREO.DOCTYPE_CONVENTION,
-    nom: entry.nom && entry.nom.trim() ? entry.nom : '—',
-    status,
-    signatureDate: status === 'signed' ? normDate(entry.signatureDate) : null,
-    sentDate: status === 'pending' ? normDate(entry.sentDate) : null,
-    viewerUrl: status === 'notSent' ? null : (entry.viewerUrl ?? null),
+    idParticipant: String(a.idParticipant),
+    doctypeId: String(a.doctypeId),
+    documentName: a.documentName,
+    nom: a.nom && a.nom.trim() ? a.nom : '—',
+    status: a.status, // "signed" | "pending"
+    signatureDate: a.signatureDate ?? null,
+    sentDate: a.sentDate ?? null,
+    viewerUrl: a.viewerUrl ?? null,
     sessionNumeroComplet: session.numeroComplet,
     sessionIntitule: session.intitule,
     sessionDateDebut: session.dateDebut,
@@ -134,6 +141,7 @@ async function fetchEtapesMap() {
 const SESSION_FIELDS = [
   'id_action_de_formation', 'numero_complet', 'intitule', 'date_debut', 'date_fin',
   'id_etape_process', 'total_participants', 'id_centre_de_formation', 'type',
+  'num_session_dpc', 'numero_comptable', // N° session DPC (toujours présent) + N° compte produit (optionnel)
 ].join(',');
 
 async function countYear(year) {
@@ -165,14 +173,12 @@ async function processSession(session) {
   if (quotaHit) return { skipped: true };
   try {
     const st = await getSessionSignatureStatus(session.idAdf, client); // Dendreo (read-only)
-    const counts = { signed: st.signed.length, pending: st.pending.length, notSent: st.notSent.length };
+    const counts = st.counts; // { envoyes, signes, nonSignes, participantsConcernes, participantsARelancer }
 
     if (!args.dryRun) {
       try {
         await upsertSession(session);
-        for (const e of st.signed) await upsertSignature(mapSig(e, 'signed', session));
-        for (const e of st.pending) await upsertSignature(mapSig(e, 'pending', session));
-        for (const e of st.notSent) await upsertSignature(mapSig(e, 'notSent', session));
+        for (const a of st.attestations) await upsertSignature(mapSig(a, session));
         await recalcSessionCounts(session.idAdf);
       } catch (werr) {
         if (isQuotaError(werr)) { quotaHit = true; return { quota: true, idAdf: session.idAdf }; }
@@ -198,32 +204,33 @@ async function processYear(year, budget) {
   const results = await pool(mapped, CONCURRENCY, processSession);
   budget.processed += sessions.length;
 
-  const agg = { sessions: 0, signed: 0, pending: 0, notSent: 0, zeroParticipant: 0, errors: [] };
+  const agg = { sessions: 0, envoyes: 0, signes: 0, nonSignes: 0, zeroParticipant: 0, errors: [] };
   for (const r of results) {
     if (!r || r.skipped || r.quota) continue;
     if (r.error) { agg.errors.push({ idAdf: r.idAdf, reason: r.reason }); continue; }
     agg.sessions += 1;
-    agg.signed += r.counts.signed;
-    agg.pending += r.counts.pending;
-    agg.notSent += r.counts.notSent;
+    agg.envoyes += r.counts.envoyes;
+    agg.signes += r.counts.signes;
+    agg.nonSignes += r.counts.nonSignes;
     if (r.zeroParticipant) agg.zeroParticipant += 1;
   }
-  log(`année ${year} → sessions:${agg.sessions} signed:${agg.signed} pending:${agg.pending} notSent:${agg.notSent} zeroPart:${agg.zeroParticipant} erreurs:${agg.errors.length}`);
+  log(`année ${year} → sessions:${agg.sessions} envoyes:${agg.envoyes} signes:${agg.signes} nonSignes:${agg.nonSignes} zeroPart:${agg.zeroParticipant} erreurs:${agg.errors.length}`);
   return agg;
 }
 
 // --- rapport ----------------------------------------------------------------
 function printReport(perYear, meta, floorHasData) {
   log(`\n################ RAPPORT BACKFILL ${args.dryRun ? '(DRY-RUN)' : ''} ################`);
-  const tot = { sessions: 0, signed: 0, pending: 0, notSent: 0, zeroParticipant: 0, errors: 0 };
+  const tot = { sessions: 0, envoyes: 0, signes: 0, nonSignes: 0, zeroParticipant: 0, errors: 0 };
   for (const [year, a] of Object.entries(perYear)) {
-    log(`  ${year}: sessions=${a.sessions} signed=${a.signed} pending=${a.pending} notSent=${a.notSent} zeroPart=${a.zeroParticipant} err=${a.errors.length}`);
-    tot.sessions += a.sessions; tot.signed += a.signed; tot.pending += a.pending;
-    tot.notSent += a.notSent; tot.zeroParticipant += a.zeroParticipant; tot.errors += a.errors.length;
+    log(`  ${year}: sessions=${a.sessions} envoyes=${a.envoyes} signes=${a.signes} nonSignes=${a.nonSignes} zeroPart=${a.zeroParticipant} err=${a.errors.length}`);
+    tot.sessions += a.sessions; tot.envoyes += a.envoyes; tot.signes += a.signes;
+    tot.nonSignes += a.nonSignes; tot.zeroParticipant += a.zeroParticipant; tot.errors += a.errors.length;
   }
   log(`  ---`);
-  log(`  TOTAUX: sessions=${tot.sessions} signed=${tot.signed} pending=${tot.pending} notSent=${tot.notSent}`);
-  log(`  notSent>0 réel : ${tot.notSent > 0 ? 'OUI ✅ (à relancer = ' + tot.notSent + ')' : 'aucun sur ce périmètre'}`);
+  log(`  TOTAUX: sessions=${tot.sessions} envoyes=${tot.envoyes} signes=${tot.signes} nonSignes=${tot.nonSignes}`);
+  log(`  à relancer (nonSignes) : ${tot.nonSignes}`);
+  log(`  invariant signes+nonSignes==envoyes : ${tot.signes + tot.nonSignes === tot.envoyes ? 'OK ✅' : 'KO ❌'}`);
 
   log(`\n  ANOMALIES :`);
   log(`   - sessions à 0 participant : ${tot.zeroParticipant}`);

@@ -7,6 +7,10 @@
 
 ## 1. Décisions verrouillées par S0
 
+> ⚠️ **RÈGLE SIGNATURE À JOUR : voir `docs/signature-rule.md` (fait autorité).** Le point 3 ci-dessous
+> (« doctype 111 ») et le statut « notSent » du §4 sont **remplacés** : on suit désormais **tout document
+> dont le nom commence par « Attestation »** (cible Participant), statuts **signé / à relancer** uniquement.
+
 1. **Source primaire = `fichiers.php`.** Un seul appel par session donne tout :
    `GET /fichiers.php?cible=action-de-formation&id_cible={id_adf}&collection_name=signature`
    → retourne les documents de signature de la session, **signés ET en attente**, avec le participant, la date et le lien de visualisation.
