@@ -8,6 +8,7 @@
     "recon": "node scripts/recon.mjs",
     "backfill": "tsx scripts/backfill.mjs",
     "clear-mirror": "tsx scripts/clear-mirror.mjs",
+    "inspect-etapes": "tsx scripts/inspect-etapes.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
