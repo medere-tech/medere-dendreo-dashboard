@@ -35,16 +35,33 @@ export interface DeriveOptions {
   sort: SortState;
   page: number;
   pageSize: number;
+  todayParis: string; // "YYYY-MM-DD" (injecté → déterministe, cf. lib/time.ts)
 }
 
 export interface DerivedSessions {
   pageItems: SessionDoc[];
-  total: number; // après filtres
+  total: number; // après filtres utilisateur
+  cockpitTotal: number; // sessions "terminées" affichables (avant filtres utilisateur)
   from: number; // 1-indexé (0 si vide)
   to: number;
   page: number; // page effective (clampée)
   pageCount: number;
-  etapes: string[]; // étapes distinctes (toutes sessions) pour le filtre
+  etapes: string[]; // étapes distinctes (parmi les sessions affichables) pour le filtre
+}
+
+/** Étape "en échec" → exclue du cockpit (libellé normalisé contenant "echec"). */
+export function isEchecEtape(etape: string): boolean {
+  return normalizeText(etape).includes('echec');
+}
+
+/**
+ * Session affichable dans le tableau cockpit = TERMINÉE : PAS en échec ET
+ * `dateFin` (jour) <= aujourd'hui à Paris. Comparaison lexicographique sur
+ * "YYYY-MM-DD" (dates ISO naïves) → aucun passage par UTC, zéro décalage de jour.
+ */
+export function isCockpitVisible(s: SessionDoc, todayParis: string): boolean {
+  if (isEchecEtape(s.etape)) return false;
+  return s.dateFin.slice(0, 10) <= todayParis;
 }
 
 /** minuscules + suppression des accents, pour recherche/tri insensibles. */
@@ -160,8 +177,9 @@ export function paginate(items: readonly SessionDoc[], page: number, pageSize: n
 }
 
 export function deriveSessions(sessions: readonly SessionDoc[], opts: DeriveOptions): DerivedSessions {
-  const filtered = applyFilters(sessions, opts.filters);
+  const visible = sessions.filter((s) => isCockpitVisible(s, opts.todayParis));
+  const filtered = applyFilters(visible, opts.filters);
   const sorted = sortSessions(filtered, opts.sort);
   const view = paginate(sorted, opts.page, opts.pageSize);
-  return { ...view, etapes: distinctEtapes(sessions) };
+  return { ...view, cockpitTotal: visible.length, etapes: distinctEtapes(visible) };
 }

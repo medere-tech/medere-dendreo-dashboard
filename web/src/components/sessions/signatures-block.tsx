@@ -4,11 +4,11 @@ import { IconCheck, IconClock, IconSend } from '@/components/icons';
 
 /**
  * Bloc Signatures (cf. docs/signature-rule.md §4 + ui-spec.md §4.1) : trois
- * chiffres aérés — Envoyés · Signés (neutres) · À relancer (ORANGE si > 0) —
- * chacun CLIQUABLE → ouvre le drawer sur le sous-ensemble correspondant.
- * Sous les chiffres (= volume de documents), une ligne LIBELLÉE explicitement
+ * chiffres aérés avec MINI-LABEL dessous — Envoyés · Signés (neutres) ·
+ * À relancer (nombre ORANGE si > 0) — chacun CLIQUABLE → ouvre le drawer.
+ * Sous les chiffres (= volume de DOCUMENTS), une ligne LIBELLÉE explicitement
  * sur les PARTICIPANTS, à ne pas confondre avec la colonne "Part." (total).
- * Statut porté par icône + nombre + libellé a11y, jamais par la couleur seule.
+ * Statut porté par icône + nombre + libellé, jamais par la couleur seule.
  */
 export function SignaturesBlock({
   session,
@@ -20,32 +20,35 @@ export function SignaturesBlock({
   const c = session.counts;
   const relance = c.nonSignes > 0;
   return (
-    <div className="flex flex-col gap-1">
-      <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 tabular-nums">
-        <CountButton
+    <div className="flex flex-col gap-1.5">
+      <div className="flex flex-wrap items-start gap-x-4 gap-y-2 tabular-nums">
+        <Counter
           onClick={() => onOpen(session, 'envoyes')}
-          label={`${c.envoyes} envoyés, voir la liste`}
-          className="text-muted-2"
+          ariaLabel={`${c.envoyes} envoyés, voir la liste`}
+          label="Envoyés"
+          value={c.envoyes}
+          tone="neutral"
         >
           <IconSend className="h-3.5 w-3.5" />
-          {c.envoyes}
-        </CountButton>
-        <CountButton
+        </Counter>
+        <Counter
           onClick={() => onOpen(session, 'signes')}
-          label={`${c.signes} signés, voir la liste`}
-          className="text-muted-2"
+          ariaLabel={`${c.signes} signés, voir la liste`}
+          label="Signés"
+          value={c.signes}
+          tone="neutral"
         >
           <IconCheck className="h-3.5 w-3.5" />
-          {c.signes}
-        </CountButton>
-        <CountButton
+        </Counter>
+        <Counter
           onClick={() => onOpen(session, 'nonSignes')}
-          label={`${c.nonSignes} à relancer, voir la liste`}
-          className={relance ? 'font-semibold text-accent' : 'text-faint'}
+          ariaLabel={`${c.nonSignes} à relancer, voir la liste`}
+          label="À relancer"
+          value={c.nonSignes}
+          tone={relance ? 'accent' : 'faint'}
         >
           <IconClock className="h-3.5 w-3.5" />
-          {c.nonSignes}
-        </CountButton>
+        </Counter>
       </div>
       <p className="text-xs tabular-nums text-faint">
         {c.participantsConcernes} concernés par une attestation · {c.participantsARelancer} à relancer
@@ -54,26 +57,39 @@ export function SignaturesBlock({
   );
 }
 
-/** Compteur cliquable : cible tactile confortable, focus visible, hover discret. */
-function CountButton({
+type Tone = 'neutral' | 'accent' | 'faint';
+
+/** Compteur cliquable : nombre (+ icône) au-dessus, mini-label muted dessous. */
+function Counter({
   onClick,
+  ariaLabel,
   label,
-  className,
+  value,
+  tone,
   children,
 }: {
   onClick: () => void;
+  ariaLabel: string;
   label: string;
-  className: string;
+  value: number;
+  tone: Tone;
   children: ReactNode;
 }) {
+  const valueTone = tone === 'accent' ? 'font-semibold text-accent' : tone === 'faint' ? 'text-faint' : 'text-muted-2';
   return (
     <button
       type="button"
       onClick={onClick}
-      aria-label={label}
-      className={`inline-flex items-center gap-1 rounded-md px-1 py-0.5 transition hover:bg-canvas ${className}`}
+      aria-label={ariaLabel}
+      className="flex flex-col items-start rounded-md px-1 py-0.5 transition hover:bg-canvas"
     >
-      {children}
+      <span className={`inline-flex items-center gap-1 ${valueTone}`}>
+        {children}
+        {value}
+      </span>
+      <span aria-hidden="true" className="mt-0.5 text-[11px] leading-none text-faint">
+        {label}
+      </span>
     </button>
   );
 }

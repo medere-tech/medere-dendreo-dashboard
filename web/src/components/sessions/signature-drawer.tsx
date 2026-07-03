@@ -168,7 +168,11 @@ export function SignatureDrawer({
   );
 }
 
-/** Une attestation : nom · date pertinente selon le statut · lien Dendreo. */
+/**
+ * UNE LIGNE PAR ATTESTATION (par document), jamais regroupé par personne : une
+ * même personne peut apparaître plusieurs fois (1 ligne / attestation), d'où le
+ * `documentName` affiché pour lever l'ambiguïté. nom · doc · date · lien Dendreo.
+ */
 function SignatureRow({ row }: { row: SignatureDoc }) {
   const signed = row.status === 'signed';
   const date = signed ? row.signatureDate : row.sentDate;
@@ -177,7 +181,8 @@ function SignatureRow({ row }: { row: SignatureDoc }) {
     <li className="flex items-center justify-between gap-3 py-3">
       <div className="min-w-0">
         <p className="truncate text-sm text-ink">{row.nom}</p>
-        <p className="mt-0.5 text-xs tabular-nums text-muted">
+        <p className="mt-0.5 truncate text-xs text-muted">{row.documentName}</p>
+        <p className="mt-0.5 text-xs tabular-nums text-faint">
           {dateLabel} {formatDateFr(date)}
         </p>
       </div>

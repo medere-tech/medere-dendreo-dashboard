@@ -4,6 +4,8 @@ import {
   applyFilters,
   deriveSessions,
   distinctEtapes,
+  isCockpitVisible,
+  isEchecEtape,
   matchesSearch,
   normalizeText,
   paginate,
@@ -138,6 +140,30 @@ describe('distinctEtapes', () => {
   });
 });
 
+describe('isEchecEtape', () => {
+  it('détecte "échec" (casse/accent-insensible), pas "Réalisation"', () => {
+    expect(isEchecEtape('Echec')).toBe(true);
+    expect(isEchecEtape('En échec')).toBe(true);
+    expect(isEchecEtape('Réalisation')).toBe(false);
+  });
+});
+
+describe('isCockpitVisible — terminée (TZ Paris injectée)', () => {
+  const today = '2026-07-03';
+  it('finit hier → visible', () => {
+    expect(isCockpitVisible(make({ idAdf: '1', dateFin: '2026-07-02T09:00:00' }), today)).toBe(true);
+  });
+  it("finit aujourd'hui → visible (même en soirée)", () => {
+    expect(isCockpitVisible(make({ idAdf: '1', dateFin: '2026-07-03T23:00:00' }), today)).toBe(true);
+  });
+  it('finit demain → caché', () => {
+    expect(isCockpitVisible(make({ idAdf: '1', dateFin: '2026-07-04T00:00:00' }), today)).toBe(false);
+  });
+  it('étape en échec → caché même si terminée', () => {
+    expect(isCockpitVisible(make({ idAdf: '1', etape: 'Echec', dateFin: '2026-01-01T00:00:00' }), today)).toBe(false);
+  });
+});
+
 describe('deriveSessions — intégration', () => {
   it('filtre → tri urgence → pagination + étapes', () => {
     const list = [
@@ -150,10 +176,30 @@ describe('deriveSessions — intégration', () => {
       sort: { key: 'urgence', dir: 'desc' },
       page: 1,
       pageSize: 25,
+      todayParis: '2026-12-31',
     });
     expect(d.total).toBe(2);
     expect(d.pageItems.map((s) => s.idAdf)).toEqual(['2', '1']);
     expect(d.etapes).toEqual(['Clôturé', 'Réalisation']);
     expect([d.from, d.to]).toEqual([1, 2]);
+  });
+
+  it('cockpit : exclut sessions à venir + en échec, expose cockpitTotal', () => {
+    const list = [
+      make({ idAdf: 'past', etape: 'Réalisation', dateFin: '2026-07-01T00:00:00', counts: { envoyes: 1, signes: 0, nonSignes: 1, participantsConcernes: 1, participantsARelancer: 1 }, oldestPendingSentDate: '2026-06-01T00:00:00' }),
+      make({ idAdf: 'today', etape: 'Réalisation', dateFin: '2026-07-03T23:00:00' }),
+      make({ idAdf: 'future', etape: 'Réalisation', dateFin: '2026-07-10T00:00:00' }),
+      make({ idAdf: 'echec', etape: 'Echec', dateFin: '2026-01-01T00:00:00' }),
+    ];
+    const d = deriveSessions(list, {
+      filters: { search: '', etape: null, hasRelances: false },
+      sort: { key: 'urgence', dir: 'desc' },
+      page: 1,
+      pageSize: 25,
+      todayParis: '2026-07-03',
+    });
+    expect(d.cockpitTotal).toBe(2);
+    expect(d.pageItems.map((s) => s.idAdf)).toEqual(['past', 'today']); // past a des relances → urgence en tête
+    expect(d.etapes).toEqual(['Réalisation']); // "Echec" absent du filtre
   });
 });

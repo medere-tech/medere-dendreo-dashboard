@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSessions } from '@/hooks/use-sessions';
+import { useParisToday } from '@/hooks/use-paris-today';
 import { deriveSessions, type SortKey, type SortState } from '@/lib/sessions/derive';
 import type { SessionDoc, SignatureFilter } from '@/lib/firestore/sessions';
 import { SessionsSkeleton } from './skeleton';
@@ -32,6 +33,8 @@ export function SessionsView() {
 
   const openDrawer = (session: SessionDoc, filter: SignatureFilter) => setDrawer({ session, filter });
 
+  const todayParis = useParisToday();
+
   // Raccourci "/" → focus recherche (sauf si déjà dans un champ).
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -47,8 +50,8 @@ export function SessionsView() {
   }, []);
 
   const derived = useMemo(
-    () => deriveSessions(sessions, { filters: { search, etape, hasRelances }, sort, page, pageSize }),
-    [sessions, search, etape, hasRelances, sort, page, pageSize],
+    () => deriveSessions(sessions, { filters: { search, etape, hasRelances }, sort, page, pageSize, todayParis }),
+    [sessions, search, etape, hasRelances, sort, page, pageSize, todayParis],
   );
 
   function onSort(key: SortKey) {
@@ -106,6 +109,11 @@ export function SessionsView() {
 
       {sessions.length === 0 ? (
         <EmptyState title="Aucune session 2026" subtitle="Le miroir ne contient pas encore de session pour 2026." />
+      ) : derived.cockpitTotal === 0 ? (
+        <EmptyState
+          title="Aucune session terminée"
+          subtitle="Les sessions à venir et les sessions en échec ne sont pas affichées ici."
+        />
       ) : derived.total === 0 ? (
         <EmptyState title="Aucun résultat" subtitle="Ajuste ta recherche ou tes filtres." />
       ) : (
