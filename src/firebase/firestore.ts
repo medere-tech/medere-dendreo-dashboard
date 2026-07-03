@@ -37,7 +37,7 @@ function assertStatus(v: unknown): asserts v is SignatureStatus {
 function validateSessionInput(s: SessionUpsertInput): void {
   assertString(s.idAdf, 'idAdf');
   assertString(s.numeroComplet, 'numeroComplet');
-  assertString(s.numeroSessionDpc, 'numeroSessionDpc');
+  assertNullableString(s.numeroSessionDpc, 'numeroSessionDpc'); // null si session non-DPC
   assertNullableString(s.numeroCompteProduit, 'numeroCompteProduit');
   assertString(s.intitule, 'intitule');
   assertString(s.dateDebut, 'dateDebut');

@@ -16,7 +16,7 @@ Une session de formation + son agrégat de signatures (pour la vue transverse et
 {
   idAdf, numeroComplet, intitule, dateDebut, dateFin, idEtapeProcess, etape,
   idCentre, type, totalParticipants,
-  numeroSessionDpc: string,            // 26.001 (toujours présent)
+  numeroSessionDpc: string | null,     // 26.001 (null si session non-DPC)
   numeroCompteProduit: string | null,  // 92622... (optionnel)
   counts: {                            // cf. signature-rule.md §4
     envoyes: number,

@@ -15,7 +15,7 @@ export interface Counts {
 export interface SessionDoc {
   idAdf: string;
   numeroComplet: string;
-  numeroSessionDpc: string; // "26.001" — N° de session DPC (Dendreo: num_session_dpc, toujours présent)
+  numeroSessionDpc: string | null; // "26.001" — N° de session DPC (Dendreo: num_session_dpc, null si non-DPC)
   numeroCompteProduit: string | null; // "92622626015" — N° compte produit / action DPC (Dendreo: numero_comptable, optionnel)
   intitule: string;
   dateDebut: string;

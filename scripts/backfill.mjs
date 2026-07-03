@@ -88,13 +88,16 @@ let etapesMap = new Map();
 function mapSession(s) {
   const id = String(s.id_action_de_formation);
   const idEtape = String(s.id_etape_process ?? '');
-  // N° compte produit : optionnel côté Dendreo → null si vide/absent (jamais '' stocké).
+  // N° session DPC & compte produit : optionnels côté Dendreo → null si vide/absent
+  // (sessions non-DPC). Jamais '' stocké.
+  const dpcRaw = s.num_session_dpc == null ? '' : String(s.num_session_dpc).trim();
+  const numeroSessionDpc = dpcRaw === '' ? null : dpcRaw;
   const compteRaw = s.numero_comptable == null ? '' : String(s.numero_comptable).trim();
   const numeroCompteProduit = compteRaw === '' ? null : compteRaw;
   return {
     idAdf: id,
     numeroComplet: s.numero_complet ?? `ADF_${id}`,
-    numeroSessionDpc: s.num_session_dpc == null ? '' : String(s.num_session_dpc).trim(),
+    numeroSessionDpc,
     numeroCompteProduit,
     intitule: s.intitule ?? '(sans intitulé)',
     dateDebut: normDate(s.date_debut),

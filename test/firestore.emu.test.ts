@@ -77,6 +77,13 @@ onEmu('couche Firestore (émulateur)', () => {
     expect(pending[0]?.idParticipant).toBe('p2');
   });
 
+  it('accepte une session non-DPC (numeroSessionDpc=null) sans erreur', async () => {
+    await upsertSession({ ...session('T4'), numeroSessionDpc: null });
+    const s = await getSession('T4');
+    expect(s?.numeroSessionDpc).toBeNull();
+    expect(s?.numeroComplet).toBe('ADF_T4');
+  });
+
   it('idempotence : ré-upsert de la même signature ne crée pas de doublon', async () => {
     const input = sig('T1', 'p1', { status: 'pending', sentDate: '2026-03-01T10:00:00.000Z' });
     await upsertSignature(input);

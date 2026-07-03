@@ -33,7 +33,11 @@
 ## 4. Écrans MVP
 
 ### 4.1 Accueil — vue transverse « Sessions » (le cockpit)
-Tableau premium de toutes les sessions **2025+**. Colonnes (socle garanti ; le reste selon cahier Justine) :
+Tableau premium des sessions **terminées** (2025+). **Filtre d'affichage :**
+- visible si `dateFin` (jour) **≤ aujourd'hui en Europe/Paris** (comparaison sur `YYYY-MM-DD`, **sans** conversion UTC / `toISOString`). Réévalué **à minuit** (timer léger) → une session finissant aujourd'hui apparaît **à 00h**, sans rechargement, sans décalage de jour.
+- **exclut** les sessions dont l'**étape a le statut « échec »**.
+
+Colonnes (socle garanti ; le reste selon cahier Justine) :
 `N° session DPC (26.001)` · `N° compte produit (92622525478)` · `Intitulé` · `Début` · `Fin` · `Étape` · `Nb participants` · bloc **Signatures**.
 
 **Bloc Signatures (cf. `docs/signature-rule.md`)** : trois chiffres **aérés, jamais tassés/superposés** — **Envoyés** · **Signés** (neutre) · **À relancer** (orange si > 0) — + le nombre de **participants concernés**. Chaque chiffre est **cliquable** → ouvre le drawer (§4.5).
@@ -48,7 +52,7 @@ Un clic sur un compteur (Envoyés / Signés / À relancer) d'une session ouvre u
 Premium : slide-in fluide, **aucun rechargement**, recherche dans la liste, lien direct par ligne, fermeture au clavier (**Échap**) + clic hors panneau. C'est le geste quotidien ops/CSM.
 
 ### 4.2 Vue transverse « À relancer » (la valeur n°1)
-Liste de **tous les participants à relancer**, toutes sessions, **triée par ancienneté** (plus vieux d'abord). Colonnes : participant · session (n° + intitulé) · date d'envoi · ancienneté · **lien de visualisation direct**. Recherche + filtre (session / période).
+Liste de **toutes les attestations non signées**, **TOUTES sessions y compris EN COURS** — mais **SAUF les sessions en « Echec »** — (les attestations partent en **fin de module**, pas de session → une session en cours peut avoir des relances), **triée par ancienneté** (plus vieux d'abord). **Une ligne par attestation** (par document), pas par personne — comme Dendreo. Colonnes : participant · N° session DPC · intitulé session · document · date d'envoi · ancienneté · **« Ouvrir dans Dendreo »** (viewerUrl). Recherche + filtre (session / période).
 
 ### 4.3 Détail session
 Infos de la session + liste de ses participants avec statut (signé / à relancer / [non envoyé]), date, lien.
