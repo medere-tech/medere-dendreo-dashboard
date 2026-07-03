@@ -162,6 +162,18 @@ describe('isCockpitVisible — terminée (TZ Paris injectée)', () => {
   it('étape en échec → caché même si terminée', () => {
     expect(isCockpitVisible(make({ idAdf: '1', etape: 'Echec', dateFin: '2026-01-01T00:00:00' }), today)).toBe(false);
   });
+  it('PREUVE : numeroComplet ADF_2024* mais session 2025 terminée → visible (année ≠ numéro, cas RAYEUR)', () => {
+    // ADF_20240569 = année de CRÉATION 2024, mais dateDebut 2025-02 / dateFin 2025 : c'est une session 2025.
+    const rayeur = make({
+      idAdf: '3686',
+      numeroComplet: 'ADF_20240569',
+      numeroSessionDpc: '25.042',
+      dateDebut: '2025-02-10T09:00:00',
+      dateFin: '2025-02-14T17:00:00',
+      etape: 'Réalisation',
+    });
+    expect(isCockpitVisible(rayeur, today)).toBe(true);
+  });
 });
 
 describe('deriveSessions — intégration', () => {

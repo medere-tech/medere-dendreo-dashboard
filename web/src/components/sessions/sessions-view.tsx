@@ -108,7 +108,7 @@ export function SessionsView() {
       />
 
       {sessions.length === 0 ? (
-        <EmptyState title="Aucune session 2026" subtitle="Le miroir ne contient pas encore de session pour 2026." />
+        <EmptyState title="Aucune session" subtitle="Le miroir ne contient pas encore de session 2025–2026." />
       ) : derived.cockpitTotal === 0 ? (
         <EmptyState
           title="Aucune session terminée"

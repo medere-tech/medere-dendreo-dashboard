@@ -11,7 +11,7 @@ export default function HomePage() {
     <section>
       <div className="mb-6">
         <h1 className="text-2xl font-semibold tracking-tight text-ink">Bonjour {firstNameFrom(user)}</h1>
-        <p className="mt-1 text-sm text-muted">Sessions 2026 — signatures en un coup d&apos;œil.</p>
+        <p className="mt-1 text-sm text-muted">Sessions terminées — signatures en un coup d&apos;œil.</p>
       </div>
 
       <SessionsView />

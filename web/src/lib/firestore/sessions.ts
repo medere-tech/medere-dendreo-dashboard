@@ -72,18 +72,6 @@ export function countForFilter(counts: Counts, filter: SignatureFilter): number 
 }
 
 /**
- * Working set 2026 : plage lexicographique sur `numeroComplet`
- * ("ADF_2026xxxx"). Fiable (toujours présent), aucun index composite requis.
- */
-export function sessions2026Query(db: Firestore): Query<DocumentData> {
-  return query(
-    collection(db, 'sessions'),
-    where('numeroComplet', '>=', 'ADF_2026'),
-    where('numeroComplet', '<', 'ADF_2027'),
-  );
-}
-
-/**
  * Attestations d'une session pour le drawer (one-shot `getDocs`, pas de listener).
  * `signes`/`nonSignes` ajoutent le filtre `status` (index composite idAdf+status
  * déclaré, cf. firestore-model.md §2) ; `envoyes` = toutes.
@@ -105,9 +93,12 @@ export function pendingSignaturesQuery(db: Firestore): Query<DocumentData> {
 }
 
 /**
- * Toutes les sessions (tous millésimes) → index en mémoire pour la jointure de
- * la vue « À relancer » : exclusion des sessions en « Echec » + `numeroSessionDpc`
- * (absent du doc signature). Le working set 2026 du cockpit ne suffit pas ici.
+ * Toute la collection sessions. Utilisée par :
+ *  - le cockpit (working set en mémoire ; l'année se lit sur `dateDebut/dateFin`,
+ *    jamais sur `numeroComplet` = année de création) ;
+ *  - la vue « À relancer » (index de jointure : exclusion « Echec » +
+ *    `numeroSessionDpc`, absent du doc signature).
+ * Le miroir ne contient que 2025–2026 (backfill par started_after).
  */
 export function allSessionsQuery(db: Firestore): Query<DocumentData> {
   return query(collection(db, 'sessions'));

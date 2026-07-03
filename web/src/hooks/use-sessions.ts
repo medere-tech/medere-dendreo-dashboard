@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { onSnapshot, type FirestoreError } from 'firebase/firestore';
 import { getFirebaseDb } from '@/lib/firebase/client';
-import { sessions2026Query, type SessionDoc } from '@/lib/firestore/sessions';
+import { allSessionsQuery, type SessionDoc } from '@/lib/firestore/sessions';
 
 interface SessionsState {
   sessions: SessionDoc[];
@@ -12,9 +12,11 @@ interface SessionsState {
 }
 
 /**
- * Abonnement temps réel au working set 2026 (`onSnapshot`).
- * Working set gardé en mémoire → recherche/tri/filtre instantanés côté UI.
- * `retry()` ré-abonne après une erreur (bouton "Réessayer").
+ * Abonnement temps réel à TOUTE la collection sessions (`onSnapshot`). Le miroir
+ * ne contient que 2025–2026 (backfill par started_after) ; l'appartenance à une
+ * année ne se déduit JAMAIS du `numeroComplet` (= année de création), seulement
+ * de `dateDebut/dateFin`. Le filtre cockpit (terminées + hors Echec) est ensuite
+ * appliqué en mémoire par `isCockpitVisible`. `retry()` ré-abonne après erreur.
  */
 export function useSessions(): SessionsState & { retry: () => void } {
   const [state, setState] = useState<SessionsState>({ sessions: [], loading: true, error: null });
@@ -23,7 +25,7 @@ export function useSessions(): SessionsState & { retry: () => void } {
   useEffect(() => {
     setState((s) => ({ ...s, loading: true, error: null }));
     const unsub = onSnapshot(
-      sessions2026Query(getFirebaseDb()),
+      allSessionsQuery(getFirebaseDb()),
       (snap) => {
         const sessions = snap.docs.map((d) => d.data() as SessionDoc);
         setState({ sessions, loading: false, error: null });
