@@ -1,9 +1,16 @@
 'use client';
 
 import { useEffect, useRef, useState, type ReactNode } from 'react';
+import Link from 'next/link';
+import { usePathname } from 'next/navigation';
 import { useAuth } from '@/lib/auth/auth-context';
 import { initialFrom } from '@/lib/auth/display-name';
 import { Brand } from './brand';
+
+const NAV = [
+  { href: '/', label: 'Sessions' },
+  { href: '/a-relancer', label: 'À relancer' },
+] as const;
 
 /**
  * Coquille applicative responsive (mobile-first) : en-tête collant avec la
@@ -13,6 +20,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const { user, signOutUser } = useAuth();
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+  const pathname = usePathname();
 
   // Fermeture du menu au clic extérieur / touche Échap.
   useEffect(() => {
@@ -38,10 +46,22 @@ export function AppShell({ children }: { children: ReactNode }) {
           <Brand className="text-base" />
 
           <div className="flex items-center gap-1">
-            {/* Navigation placeholder (S3.2 branchera les vues réelles). */}
-            <nav className="hidden items-center gap-1 sm:flex" aria-label="Navigation">
-              <span className="rounded-md px-3 py-1.5 text-sm font-medium text-ink">Sessions</span>
-              <span className="rounded-md px-3 py-1.5 text-sm text-faint">À relancer</span>
+            <nav className="flex items-center gap-1" aria-label="Navigation">
+              {NAV.map((item) => {
+                const active = item.href === '/' ? pathname === '/' : pathname.startsWith(item.href);
+                return (
+                  <Link
+                    key={item.href}
+                    href={item.href}
+                    aria-current={active ? 'page' : undefined}
+                    className={`rounded-md px-2.5 py-1.5 text-sm transition sm:px-3 ${
+                      active ? 'font-medium text-ink' : 'text-muted hover:text-ink'
+                    }`}
+                  >
+                    {item.label}
+                  </Link>
+                );
+              })}
             </nav>
 
             <div className="relative" ref={menuRef}>

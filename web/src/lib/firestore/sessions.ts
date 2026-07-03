@@ -1,4 +1,4 @@
-import { collection, query, where, type Firestore, type Query, type DocumentData } from 'firebase/firestore';
+import { collection, orderBy, query, where, type Firestore, type Query, type DocumentData } from 'firebase/firestore';
 
 /**
  * Miroir client de `sessions/{idAdf}` et `signatures/{...}` (cf.
@@ -93,4 +93,22 @@ export function signaturesForSessionQuery(db: Firestore, idAdf: string, filter: 
   if (filter === 'signes') return query(base, where('idAdf', '==', idAdf), where('status', '==', 'signed'));
   if (filter === 'nonSignes') return query(base, where('idAdf', '==', idAdf), where('status', '==', 'pending'));
   return query(base, where('idAdf', '==', idAdf));
+}
+
+/**
+ * Vue transverse « À relancer » (ui-spec.md §4.2) : toutes les attestations
+ * NON SIGNÉES, triées par ancienneté (plus vieux d'abord). Index composite
+ * `signatures(status ASC, sentDate ASC)` — confirmé ENABLED.
+ */
+export function pendingSignaturesQuery(db: Firestore): Query<DocumentData> {
+  return query(collection(db, 'signatures'), where('status', '==', 'pending'), orderBy('sentDate', 'asc'));
+}
+
+/**
+ * Toutes les sessions (tous millésimes) → index en mémoire pour la jointure de
+ * la vue « À relancer » : exclusion des sessions en « Echec » + `numeroSessionDpc`
+ * (absent du doc signature). Le working set 2026 du cockpit ne suffit pas ici.
+ */
+export function allSessionsQuery(db: Firestore): Query<DocumentData> {
+  return query(collection(db, 'sessions'));
 }

@@ -11,7 +11,7 @@ import {
   type SignatureDoc,
   type SignatureFilter,
 } from '@/lib/firestore/sessions';
-import { formatDateFr } from '@/lib/format';
+import { formatInstantParisFr } from '@/lib/format';
 import { normalizeText } from '@/lib/sessions/derive';
 import { IconSearch } from '@/components/icons';
 
@@ -183,7 +183,7 @@ function SignatureRow({ row }: { row: SignatureDoc }) {
         <p className="truncate text-sm text-ink">{row.nom}</p>
         <p className="mt-0.5 truncate text-xs text-muted">{row.documentName}</p>
         <p className="mt-0.5 text-xs tabular-nums text-faint">
-          {dateLabel} {formatDateFr(date)}
+          {dateLabel} {formatInstantParisFr(date)}
         </p>
       </div>
       {row.viewerUrl ? (

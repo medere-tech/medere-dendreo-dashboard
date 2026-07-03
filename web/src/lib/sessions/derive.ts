@@ -151,8 +151,8 @@ export function distinctEtapes(sessions: readonly SessionDoc[]): string[] {
   return [...set].sort((a, b) => a.localeCompare(b, 'fr'));
 }
 
-export interface PageView {
-  pageItems: SessionDoc[];
+export interface PageView<T> {
+  pageItems: T[];
   total: number;
   from: number;
   to: number;
@@ -160,7 +160,8 @@ export interface PageView {
   pageCount: number;
 }
 
-export function paginate(items: readonly SessionDoc[], page: number, pageSize: number): PageView {
+/** Pagination générique (réutilisée par la vue « À relancer »). */
+export function paginate<T>(items: readonly T[], page: number, pageSize: number): PageView<T> {
   const total = items.length;
   const pageCount = Math.max(1, Math.ceil(total / pageSize));
   const clamped = Math.min(Math.max(1, page), pageCount);
