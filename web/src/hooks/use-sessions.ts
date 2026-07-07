@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { onSnapshot, type FirestoreError } from 'firebase/firestore';
 import { getFirebaseDb } from '@/lib/firebase/client';
-import { allSessionsQuery, type SessionDoc } from '@/lib/firestore/sessions';
+import { allSessionsQuery, toSessionDoc, type SessionDoc } from '@/lib/firestore/sessions';
 
 interface SessionsState {
   sessions: SessionDoc[];
@@ -27,7 +27,7 @@ export function useSessions(): SessionsState & { retry: () => void } {
     const unsub = onSnapshot(
       allSessionsQuery(getFirebaseDb()),
       (snap) => {
-        const sessions = snap.docs.map((d) => d.data() as SessionDoc);
+        const sessions = snap.docs.map((d) => toSessionDoc(d.data()));
         setState({ sessions, loading: false, error: null });
       },
       (error) => setState({ sessions: [], loading: false, error }),

@@ -72,4 +72,11 @@ export interface SessionSignatureStatus {
   idAdf: string;
   attestations: AttestationLine[];
   counts: SessionSignatureCounts;
+  /**
+   * Lignes d'attestation trackées (nom "Attestation" + cible Participant) mais
+   * IGNORÉES car sans `doctype_id` exploitable → non clefables (cf. signatureKey)
+   * et dédup impossible. Comptées pour visibilité : jamais perdues silencieusement,
+   * et elles ne font JAMAIS tomber la session.
+   */
+  ignored: number;
 }

@@ -4,6 +4,10 @@
 //
 // - Découvre la 1re année en scannant chaque année (année courante → plancher 2015),
 //   SANS early-stop, sans hardcoder de date de fondation.
+// - COUVERTURE = CHEVAUCHEMENT : par année, on prend les sessions qui COMMENCENT
+//   OU qui FINISSENT dans l'année (started_* ∪ ended_*), dédupliquées par idAdf
+//   (inter-années aussi). Corrige le trou des sessions "à cheval entrantes"
+//   (début avant la période, fin dedans) que le filtre par début seul ratait.
 // - Par session : getSessionSignatureStatus (S1) → upsertSession + upsertSignature(s)
 //   + recalcSessionCounts (transaction). Idempotent (rejouer = aucun doublon).
 // - Reprenable via _meta/backfill.yearsProcessed (sauf --force).
@@ -83,6 +87,10 @@ async function pool(items, size, fn) {
 // --- état global ------------------------------------------------------------
 let quotaHit = false;
 let etapesMap = new Map();
+// Dédup inter-années : une session à cheval (start année N, end année N+1) est
+// listée par 2 années → on ne la traite qu'UNE fois, rattachée à sa 1re année
+// rencontrée (ordre croissant). Upsert idempotent par idAdf de toute façon.
+const processedIds = new Set();
 
 // --- mappers ----------------------------------------------------------------
 function mapSession(s) {
@@ -100,8 +108,9 @@ function mapSession(s) {
     numeroSessionDpc,
     numeroCompteProduit,
     intitule: s.intitule ?? '(sans intitulé)',
-    dateDebut: normDate(s.date_debut),
-    dateFin: normDate(s.date_fin),
+    // Dates "molles" : '' si absentes (jamais null) → la session s'écrit toujours.
+    dateDebut: normDate(s.date_debut) ?? '',
+    dateFin: normDate(s.date_fin) ?? '',
     idEtapeProcess: idEtape,
     etape: etapesMap.get(idEtape) ?? `etape_${idEtape || '?'}`,
     idCentre: String(s.id_centre_de_formation ?? ''),
@@ -147,18 +156,30 @@ const SESSION_FIELDS = [
   'num_session_dpc', 'numero_comptable', // N° session DPC (toujours présent) + N° compte produit (optionnel)
 ].join(',');
 
+/**
+ * Sessions qui CHEVAUCHENT l'année : celles qui COMMENCENT dans l'année OU qui
+ * FINISSENT dans l'année (2 requêtes Dendreo), dédupliquées par idAdf (une session
+ * à cheval matche les deux). Corrige le trou "entrantes à cheval" : une session
+ * commencée avant l'année mais finissant dedans est désormais capturée via ended_*.
+ */
+async function fetchYearSessionsRaw(year, fields) {
+  const started = asArray(await client.get('actions_de_formation.php', {
+    started_after: `${year}-01-01`, started_before: `${year}-12-31`, fields,
+  }));
+  const ended = asArray(await client.get('actions_de_formation.php', {
+    ended_after: `${year}-01-01`, ended_before: `${year}-12-31`, fields,
+  }));
+  const byId = new Map();
+  for (const s of [...started, ...ended]) byId.set(String(s.id_action_de_formation), s);
+  return [...byId.values()];
+}
+
 async function countYear(year) {
-  const json = await client.get('actions_de_formation.php', {
-    started_after: `${year}-01-01`, started_before: `${year}-12-31`, fields: 'id_action_de_formation',
-  });
-  return asArray(json).length;
+  return (await fetchYearSessionsRaw(year, 'id_action_de_formation,date_debut,date_fin')).length;
 }
 
 async function listYearSessions(year) {
-  const json = await client.get('actions_de_formation.php', {
-    started_after: `${year}-01-01`, started_before: `${year}-12-31`, fields: SESSION_FIELDS,
-  });
-  return asArray(json);
+  return fetchYearSessionsRaw(year, SESSION_FIELDS);
 }
 
 // --- _meta ------------------------------------------------------------------
@@ -177,18 +198,27 @@ async function processSession(session) {
   try {
     const st = await getSessionSignatureStatus(session.idAdf, client); // Dendreo (read-only)
     const counts = st.counts; // { envoyes, signes, nonSignes, participantsConcernes, participantsARelancer }
+    let ignoredLines = st.ignored; // lignes trackées sans doctype_id (dérivation) → déjà écartées
 
     if (!args.dryRun) {
       try {
-        await upsertSession(session);
-        for (const a of st.attestations) await upsertSignature(mapSig(a, session));
-        await recalcSessionCounts(session.idAdf);
+        await upsertSession(session); // la SESSION s'écrit TOUJOURS (avant les lignes)
+        for (const a of st.attestations) {
+          try {
+            await upsertSignature(mapSig(a, session));
+          } catch (lineErr) {
+            if (isQuotaError(lineErr)) throw lineErr; // quota → remonte (arrêt propre)
+            ignoredLines += 1; // une ligne KO n'abat JAMAIS la session : on l'ignore + compte
+            log(`  ! ligne ignorée idAdf=${session.idAdf} : ${shortReason(lineErr)}`);
+          }
+        }
+        await recalcSessionCounts(session.idAdf); // toujours recalculé après écriture
       } catch (werr) {
         if (isQuotaError(werr)) { quotaHit = true; return { quota: true, idAdf: session.idAdf }; }
         throw werr;
       }
     }
-    return { ok: true, counts, zeroParticipant: session.totalParticipants === 0 };
+    return { ok: true, counts, ignored: ignoredLines, zeroParticipant: session.totalParticipants === 0 };
   } catch (err) {
     return { error: true, idAdf: session.idAdf, reason: shortReason(err) };
   }
@@ -196,18 +226,25 @@ async function processSession(session) {
 
 // --- traitement d'une année -------------------------------------------------
 async function processYear(year, budget) {
-  let sessions = await listYearSessions(year);
+  const sessions = await listYearSessions(year);
+  // Chevauchement + dédup inter-années : on retire les idAdf déjà traités par une
+  // année précédente (session à cheval). On ne marque comme "traité" que ce qui
+  // passe réellement (après application de --limit) pour ne pas masquer une session
+  // écartée par la limite lors d'une prochaine année.
+  const candidates = sessions.map(mapSession).filter((s) => !processedIds.has(s.idAdf));
+  const dupCrossYear = sessions.length - candidates.length;
+  let mapped = candidates;
   if (budget.limit != null) {
     const room = Math.max(0, budget.limit - budget.processed);
-    if (sessions.length > room) sessions = sessions.slice(0, room);
+    if (mapped.length > room) mapped = mapped.slice(0, room);
   }
-  log(`\n=== Année ${year} : ${sessions.length} session(s) à traiter${args.dryRun ? ' (dry-run)' : ''} ===`);
+  for (const s of mapped) processedIds.add(s.idAdf);
+  log(`\n=== Année ${year} : ${mapped.length} session(s) à traiter (chevauchement ; ${dupCrossYear} déjà vue(s) année(s) précédente(s))${args.dryRun ? ' (dry-run)' : ''} ===`);
 
-  const mapped = sessions.map(mapSession);
   const results = await pool(mapped, CONCURRENCY, processSession);
-  budget.processed += sessions.length;
+  budget.processed += mapped.length;
 
-  const agg = { sessions: 0, envoyes: 0, signes: 0, nonSignes: 0, zeroParticipant: 0, errors: [] };
+  const agg = { sessions: 0, envoyes: 0, signes: 0, nonSignes: 0, ignored: 0, zeroParticipant: 0, errors: [] };
   for (const r of results) {
     if (!r || r.skipped || r.quota) continue;
     if (r.error) { agg.errors.push({ idAdf: r.idAdf, reason: r.reason }); continue; }
@@ -215,20 +252,21 @@ async function processYear(year, budget) {
     agg.envoyes += r.counts.envoyes;
     agg.signes += r.counts.signes;
     agg.nonSignes += r.counts.nonSignes;
+    agg.ignored += r.ignored ?? 0;
     if (r.zeroParticipant) agg.zeroParticipant += 1;
   }
-  log(`année ${year} → sessions:${agg.sessions} envoyes:${agg.envoyes} signes:${agg.signes} nonSignes:${agg.nonSignes} zeroPart:${agg.zeroParticipant} erreurs:${agg.errors.length}`);
+  log(`année ${year} → sessions:${agg.sessions} envoyes:${agg.envoyes} signes:${agg.signes} nonSignes:${agg.nonSignes} ignoredLines:${agg.ignored} zeroPart:${agg.zeroParticipant} erreurs:${agg.errors.length}`);
   return agg;
 }
 
 // --- rapport ----------------------------------------------------------------
 function printReport(perYear, meta, floorHasData) {
   log(`\n################ RAPPORT BACKFILL ${args.dryRun ? '(DRY-RUN)' : ''} ################`);
-  const tot = { sessions: 0, envoyes: 0, signes: 0, nonSignes: 0, zeroParticipant: 0, errors: 0 };
+  const tot = { sessions: 0, envoyes: 0, signes: 0, nonSignes: 0, ignored: 0, zeroParticipant: 0, errors: 0 };
   for (const [year, a] of Object.entries(perYear)) {
-    log(`  ${year}: sessions=${a.sessions} envoyes=${a.envoyes} signes=${a.signes} nonSignes=${a.nonSignes} zeroPart=${a.zeroParticipant} err=${a.errors.length}`);
+    log(`  ${year}: sessions=${a.sessions} envoyes=${a.envoyes} signes=${a.signes} nonSignes=${a.nonSignes} ignoredLines=${a.ignored} zeroPart=${a.zeroParticipant} err=${a.errors.length}`);
     tot.sessions += a.sessions; tot.envoyes += a.envoyes; tot.signes += a.signes;
-    tot.nonSignes += a.nonSignes; tot.zeroParticipant += a.zeroParticipant; tot.errors += a.errors.length;
+    tot.nonSignes += a.nonSignes; tot.ignored += a.ignored; tot.zeroParticipant += a.zeroParticipant; tot.errors += a.errors.length;
   }
   log(`  ---`);
   log(`  TOTAUX: sessions=${tot.sessions} envoyes=${tot.envoyes} signes=${tot.signes} nonSignes=${tot.nonSignes}`);
@@ -236,6 +274,7 @@ function printReport(perYear, meta, floorHasData) {
   log(`  invariant signes+nonSignes==envoyes : ${tot.signes + tot.nonSignes === tot.envoyes ? 'OK ✅' : 'KO ❌'}`);
 
   log(`\n  ANOMALIES :`);
+  log(`   - lignes d'attestation ignorées (sans doctype_id exploitable) : ${tot.ignored}`);
   log(`   - sessions à 0 participant : ${tot.zeroParticipant}`);
   if (floorHasData) log(`   - ⚠ le plancher ${FLOOR_YEAR} contient des sessions → BAISSER le plancher (données plus anciennes existent)`);
   const errs = Object.entries(perYear).flatMap(([y, a]) => a.errors.map((e) => ({ year: y, ...e })));
@@ -261,7 +300,7 @@ async function main() {
     yearsToProcess = [args.year];
   } else {
     // Découverte : scan de chaque année (courante → plancher), SANS early-stop.
-    log(`# Découverte : scan ${currentYear} → ${FLOOR_YEAR} (1 req/année)`);
+    log(`# Découverte : scan ${currentYear} → ${FLOOR_YEAR} (2 req/année : start + end)`);
     const scanned = [];
     for (let y = currentYear; y >= FLOOR_YEAR; y--) {
       const n = await countYear(y);

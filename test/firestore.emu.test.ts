@@ -117,4 +117,22 @@ onEmu('couche Firestore (émulateur)', () => {
   it('validation stricte : rejette un input incohérent (signed sans signatureDate)', async () => {
     await expect(upsertSignature(sig('T3', 'p1', { status: 'signed' }))).rejects.toThrow();
   });
+
+  it('session TOLÉRANTE : champs mous vides → la session s\'écrit quand même', async () => {
+    // Seuls idAdf + numeroComplet sont requis ; le reste peut être vide (jamais perdre une session).
+    await upsertSession({
+      ...session('T5'),
+      intitule: '', dateDebut: '', dateFin: '', idEtapeProcess: '', etape: '', idCentre: '', type: '',
+    });
+    const s = await getSession('T5');
+    expect(s?.numeroComplet).toBe('ADF_T5');
+    expect(s?.dateDebut).toBe('');
+    expect(s?.etape).toBe('');
+  });
+
+  it('session rejetée UNIQUEMENT si idAdf ou numeroComplet manquant', async () => {
+    await expect(upsertSession({ ...session('T6'), numeroComplet: '' })).rejects.toThrow();
+    // …mais un champ mou vide ne rejette pas :
+    await expect(upsertSession({ ...session('T7'), type: '', idCentre: '' })).resolves.toBeUndefined();
+  });
 });

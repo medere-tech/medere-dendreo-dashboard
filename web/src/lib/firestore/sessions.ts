@@ -38,6 +38,61 @@ export interface SessionDoc {
   source: string;
 }
 
+/** Compteurs neutres : appliqués quand `counts` est absent/partiel (ex. session
+ *  écrite par un backfill interrompu par le quota, avant `recalcSessionCounts`). */
+export const EMPTY_COUNTS: Counts = {
+  envoyes: 0,
+  signes: 0,
+  nonSignes: 0,
+  participantsConcernes: 0,
+  participantsARelancer: 0,
+};
+
+// --- Normalisation à la LECTURE (défensif) -----------------------------------
+// Le miroir peut contenir des docs incomplets (backfill partiel). L'UI ne doit
+// ni crasher ni fausser : un doc incomplet est normalisé (0 partout, null-safe).
+const asStr = (v: unknown, fallback = ''): string => (typeof v === 'string' ? v : fallback);
+const asNullableStr = (v: unknown): string | null => (typeof v === 'string' ? v : null);
+const asNum = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
+
+function normalizeCounts(raw: unknown): Counts {
+  const c = (raw ?? {}) as Partial<Record<keyof Counts, unknown>>;
+  return {
+    envoyes: asNum(c.envoyes),
+    signes: asNum(c.signes),
+    nonSignes: asNum(c.nonSignes),
+    participantsConcernes: asNum(c.participantsConcernes),
+    participantsARelancer: asNum(c.participantsARelancer),
+  };
+}
+
+/**
+ * Normalise un doc Firestore brut en `SessionDoc` sûr : `counts` TOUJOURS complet
+ * (même si absent → 0 partout), `numeroSessionDpc`/`numeroCompteProduit`/
+ * `oldestPendingSentDate` null-safe. Aucun accès aval ne peut plus lire un champ
+ * `undefined`. À utiliser à CHAQUE lecture de la collection `sessions`.
+ */
+export function toSessionDoc(raw: DocumentData): SessionDoc {
+  return {
+    idAdf: asStr(raw.idAdf),
+    numeroComplet: asStr(raw.numeroComplet),
+    numeroSessionDpc: asNullableStr(raw.numeroSessionDpc),
+    numeroCompteProduit: asNullableStr(raw.numeroCompteProduit),
+    intitule: asStr(raw.intitule),
+    dateDebut: asStr(raw.dateDebut),
+    dateFin: asStr(raw.dateFin),
+    idEtapeProcess: asStr(raw.idEtapeProcess),
+    etape: asStr(raw.etape),
+    idCentre: asStr(raw.idCentre),
+    type: asStr(raw.type),
+    totalParticipants: asNum(raw.totalParticipants),
+    counts: normalizeCounts(raw.counts),
+    oldestPendingSentDate: asNullableStr(raw.oldestPendingSentDate),
+    lastSyncedAt: asStr(raw.lastSyncedAt),
+    source: asStr(raw.source),
+  };
+}
+
 export type SignatureStatus = 'signed' | 'pending';
 
 /** Document `signatures/{idAdf}_{idParticipant}_{doctypeId}` — une ATTESTATION. */
@@ -55,6 +110,26 @@ export interface SignatureDoc {
   sessionIntitule: string;
   sessionDateDebut: string;
   lastSyncedAt: string;
+}
+
+/** Normalise un doc `signatures/*` brut en `SignatureDoc` sûr (défensif, null-safe). */
+export function toSignatureDoc(raw: DocumentData): SignatureDoc {
+  const status: SignatureStatus = raw.status === 'signed' ? 'signed' : 'pending';
+  return {
+    idAdf: asStr(raw.idAdf),
+    idParticipant: asStr(raw.idParticipant),
+    doctypeId: asStr(raw.doctypeId),
+    documentName: asStr(raw.documentName),
+    nom: asStr(raw.nom),
+    status,
+    signatureDate: asNullableStr(raw.signatureDate),
+    sentDate: asNullableStr(raw.sentDate),
+    viewerUrl: asNullableStr(raw.viewerUrl),
+    sessionNumeroComplet: asStr(raw.sessionNumeroComplet),
+    sessionIntitule: asStr(raw.sessionIntitule),
+    sessionDateDebut: asStr(raw.sessionDateDebut),
+    lastSyncedAt: asStr(raw.lastSyncedAt),
+  };
 }
 
 /** Filtre du drawer : quel chiffre a été cliqué. */

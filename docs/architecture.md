@@ -24,12 +24,20 @@
 **On récupère tout l'historique depuis le début de Dendreo, pas seulement 2026.**
 Raison métier : des Conventions de **2025 (et avant)** sont **encore non signées** — ce sont précisément des gens à relancer.
 
-⚠️ Rappel technique : `actions_de_formation.php` ne renvoie **par défaut que la dernière année**. Pour balayer tout l'historique, on **paginera par fenêtres annuelles** via `started_after`/`ended_after` :
+⚠️ Rappel technique : `actions_de_formation.php` ne renvoie **par défaut que la dernière année**. Pour balayer tout l'historique, on **paginera par fenêtres annuelles**.
+
+**Couverture = CHEVAUCHEMENT (début OU fin dans la fenêtre), plus « début seul ».**
+Un filtre par **date de début seule** (`started_after`/`started_before`) rate les sessions **« à cheval entrantes »** : commencées **avant** la fenêtre mais qui se déroulent/**finissent dedans** (ex. idAdf 2408, début 2024-09 → fin 2025-01). Prouvé S5.0 : **296** telles sessions sur 2025-2026, **234 absentes** du miroir, leurs attestations non signées **invisibles** dans « À relancer ».
+
+Règle appliquée par le crawler, pour chaque année Y de {première année} à {année courante} :
 ```
-pour chaque année Y de {première année Dendreo} à {année courante} :
-   GET /actions_de_formation.php?started_after=Y-01-01&started_before=Y-12-31&fields=...
+starts = GET actions_de_formation.php?started_after=Y-01-01&started_before=Y-12-31&fields=...
+ends   = GET actions_de_formation.php?ended_after=Y-01-01&ended_before=Y-12-31&fields=...
+sessions(Y) = dédup_par_idAdf(starts ∪ ends)      # une session à cheval matche les deux
 ```
-La **première année** se découvre empiriquement (la fenêtre la plus ancienne qui renvoie des sessions).
+- **Dédup inter-années** : une session commencée en Y et finissant en Y+1 est listée par les 2 années → **traitée une seule fois**, rattachée à sa **1re année** rencontrée. L'upsert étant par `idAdf`, l'idempotence tient de toute façon (pas de double écriture).
+- **Coût** : 2 requêtes/année (au lieu d'1) pour la liste + la découverte — négligeable devant le quota (cf. §5).
+- La **première année** se découvre empiriquement (la fenêtre la plus ancienne qui renvoie des sessions).
 
 ## 3. Composants
 

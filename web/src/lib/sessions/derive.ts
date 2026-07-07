@@ -1,4 +1,13 @@
-import type { SessionDoc } from '@/lib/firestore/sessions';
+import { EMPTY_COUNTS, type Counts, type SessionDoc } from '@/lib/firestore/sessions';
+
+/**
+ * Accès défensif aux compteurs : même si un doc mirror arrive sans `counts`
+ * (backfill interrompu), le tri/filtre lit 0 partout au lieu de crasher.
+ * `toSessionDoc` (lecture) garantit déjà `counts` ; ceci est la ceinture+bretelles.
+ */
+function countsOf(s: SessionDoc): Counts {
+  return s.counts ?? EMPTY_COUNTS;
+}
 
 /**
  * Logique PURE du tableau Sessions : recherche / filtre / tri (urgence par
@@ -82,7 +91,7 @@ export function matchesSearch(s: SessionDoc, rawQuery: string): boolean {
 export function applyFilters(sessions: readonly SessionDoc[], filters: SessionFilters): SessionDoc[] {
   return sessions.filter((s) => {
     if (filters.etape && s.etape !== filters.etape) return false;
-    if (filters.hasRelances && s.counts.nonSignes <= 0) return false;
+    if (filters.hasRelances && countsOf(s).nonSignes <= 0) return false;
     if (!matchesSearch(s, filters.search)) return false;
     return true;
   });
@@ -90,7 +99,9 @@ export function applyFilters(sessions: readonly SessionDoc[], filters: SessionFi
 
 /** Comparateur "urgence" : plus d'à-relancer d'abord, puis plus ancienne demande. */
 function compareUrgence(a: SessionDoc, b: SessionDoc): number {
-  if (b.counts.nonSignes !== a.counts.nonSignes) return b.counts.nonSignes - a.counts.nonSignes;
+  const an = countsOf(a).nonSignes;
+  const bn = countsOf(b).nonSignes;
+  if (bn !== an) return bn - an;
   const ao = a.oldestPendingSentDate;
   const bo = b.oldestPendingSentDate;
   if (ao !== bo) {
@@ -124,7 +135,7 @@ function fieldValue(s: SessionDoc, key: Exclude<SortKey, 'urgence'>): string | n
     case 'totalParticipants':
       return s.totalParticipants;
     case 'nonSignes':
-      return s.counts.nonSignes;
+      return countsOf(s).nonSignes;
   }
 }
 

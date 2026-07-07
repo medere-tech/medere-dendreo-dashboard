@@ -47,6 +47,18 @@ function indexOf(sessions: SessionDoc[]): Map<string, SessionDoc> {
 
 const TODAY = '2026-06-11';
 
+describe('robustesse : session jointe avec counts=undefined (doc mirror incomplet)', () => {
+  it('deriveRelance ne crashe pas et affiche la ligne (relance ne dépend pas de counts)', () => {
+    const pending = [sig({ idParticipant: 'p1', doctypeId: '165', idAdf: 'inc' })];
+    const incomplete = { ...session({ idAdf: 'inc', numeroSessionDpc: '26.099' }), counts: undefined as unknown as SessionDoc['counts'] };
+    const idx = new Map<string, SessionDoc>([['inc', incomplete]]);
+    expect(() => deriveRelance(pending, idx, { search: '', sortDir: 'asc', page: 1, pageSize: 25, todayParis: TODAY })).not.toThrow();
+    const d = deriveRelance(pending, idx, { search: '', sortDir: 'asc', page: 1, pageSize: 25, todayParis: TODAY });
+    expect(d.pageItems).toHaveLength(1);
+    expect(d.pageItems[0]!.numeroSessionDpc).toBe('26.099');
+  });
+});
+
 describe('buildRelanceRows', () => {
   it('exclut les sessions en "Echec", joint numeroSessionDpc + intitulé', () => {
     const pending = [

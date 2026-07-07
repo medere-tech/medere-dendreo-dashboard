@@ -30,34 +30,46 @@ function assertNumber(v: unknown, name: string): asserts v is number {
 function assertNullableString(v: unknown, name: string): asserts v is string | null {
   if (v !== null && typeof v !== 'string') throw new Error(`Champ doit être string|null : ${name}`);
 }
+/** String tolérante : type string exigé, mais valeur VIDE acceptée (champ "mou",
+ *  non identitaire). Sert à ne jamais rejeter une session sur un champ secondaire. */
+function assertStringType(v: unknown, name: string): asserts v is string {
+  if (typeof v !== 'string') throw new Error(`Champ doit être une string : ${name}`);
+}
 function assertStatus(v: unknown): asserts v is SignatureStatus {
   if (typeof v !== 'string' || !STATUSES.includes(v as SignatureStatus)) throw new Error(`status invalide (attendu signed|pending) : ${String(v)}`);
 }
 
 function validateSessionInput(s: SessionUpsertInput): void {
+  // SEULS champs strictement requis (non vides) = l'IDENTITÉ de la session :
+  //   - idAdf (clé Firestore) + numeroComplet (clé humaine).
+  // Tout le reste est TOLÉRÉ (string éventuellement vide, ou null) : une session
+  // ne doit JAMAIS être perdue à cause d'un champ secondaire absent (même
+  // philosophie que numeroSessionDpc nullable). Le mapper fournit des défauts sûrs.
   assertString(s.idAdf, 'idAdf');
   assertString(s.numeroComplet, 'numeroComplet');
   assertNullableString(s.numeroSessionDpc, 'numeroSessionDpc'); // null si session non-DPC
   assertNullableString(s.numeroCompteProduit, 'numeroCompteProduit');
-  assertString(s.intitule, 'intitule');
-  assertString(s.dateDebut, 'dateDebut');
-  assertString(s.dateFin, 'dateFin');
-  assertString(s.idEtapeProcess, 'idEtapeProcess');
-  assertString(s.etape, 'etape');
-  assertString(s.idCentre, 'idCentre');
-  assertString(s.type, 'type');
+  assertStringType(s.intitule, 'intitule');
+  assertStringType(s.dateDebut, 'dateDebut');
+  assertStringType(s.dateFin, 'dateFin');
+  assertStringType(s.idEtapeProcess, 'idEtapeProcess');
+  assertStringType(s.etape, 'etape');
+  assertStringType(s.idCentre, 'idCentre');
+  assertStringType(s.type, 'type');
   assertNumber(s.totalParticipants, 'totalParticipants');
 }
 
 function validateSignatureInput(s: SignatureUpsertInput): void {
+  // Clés/identité de la ligne : strictement requis (non vides).
   assertString(s.idAdf, 'idAdf');
   assertString(s.idParticipant, 'idParticipant');
   assertString(s.doctypeId, 'doctypeId');
   assertString(s.documentName, 'documentName');
   assertString(s.nom, 'nom');
-  assertString(s.sessionNumeroComplet, 'sessionNumeroComplet');
-  assertString(s.sessionIntitule, 'sessionIntitule');
-  assertString(s.sessionDateDebut, 'sessionDateDebut');
+  // Échos dénormalisés de la session : tolérés (miroir de champs "mous" de session).
+  assertStringType(s.sessionNumeroComplet, 'sessionNumeroComplet');
+  assertStringType(s.sessionIntitule, 'sessionIntitule');
+  assertStringType(s.sessionDateDebut, 'sessionDateDebut');
   assertStatus(s.status);
   assertNullableString(s.signatureDate, 'signatureDate');
   assertNullableString(s.sentDate, 'sentDate');

@@ -128,6 +128,43 @@ describe('granularité PAR attestation (pas par participant)', () => {
 });
 
 // ---------------------------------------------------------------------------
+describe('attestation sans doctype_id (cas réel idAdf 2691) — ligne IGNORÉE, jamais la session', () => {
+  it('une "Attestation" Participant sans doctype_id → ignorée (comptée), hors attestations', () => {
+    const res = computeSignatureStatus('2691', [
+      mkFichier({ name: 'Attestation_honneur_EPP aval_2025', entite_liee: participant('p1'), doctype_id: '', signature_date: '2026-01-07T19:46:19.000000Z' }),
+    ]);
+    expect(res.ignored).toBe(1);
+    expect(res.attestations).toHaveLength(0);
+    expect(res.counts.envoyes).toBe(0);
+  });
+
+  it('doctype_id blanc (espaces) est aussi traité comme vide → ignoré', () => {
+    const res = computeSignatureStatus('S', [mkFichier({ name: 'Attestation X', doctype_id: '   ' })]);
+    expect(res.ignored).toBe(1);
+    expect(res.attestations).toHaveLength(0);
+  });
+
+  it('2 docs sans doctype_id pour le même participant → 2 ignorés (pas de collision de clé)', () => {
+    const res = computeSignatureStatus('2691', [
+      mkFichier({ id: 'a', name: 'Attestation_honneur_CV-PRES-EL_split (1)', entite_liee: participant('p1'), doctype_id: '', signature_date: '2025-02-07T06:06:36.000000Z' }),
+      mkFichier({ id: 'b', name: 'Attestation_honneur_EPP aval_2025', entite_liee: participant('p1'), doctype_id: '', signature_date: '2026-01-07T19:46:19.000000Z' }),
+    ]);
+    expect(res.ignored).toBe(2);
+    expect(res.attestations).toHaveLength(0);
+  });
+
+  it('lignes valides + lignes ignorées coexistent : la session garde ses attestations valides', () => {
+    const res = computeSignatureStatus('2691', [
+      mkFichier({ id: 'ok', name: 'Attestation valide', entite_liee: participant('p1'), doctype_id: '161', signature_date: '2026-01-01T00:00:00.000000Z' }),
+      mkFichier({ id: 'ko', name: 'Attestation sans doctype', entite_liee: participant('p1'), doctype_id: '', signature_date: '2026-01-02T00:00:00.000000Z' }),
+    ]);
+    expect(res.ignored).toBe(1);
+    expect(res.attestations).toHaveLength(1);
+    expect(res.counts).toEqual({ envoyes: 1, signes: 1, nonSignes: 0, participantsConcernes: 1, participantsARelancer: 0 });
+  });
+});
+
+// ---------------------------------------------------------------------------
 describe('filtre : rien à suivre', () => {
   it('aucune attestation (que des Conventions) → compteurs à zéro', () => {
     const res = computeSignatureStatus('S', [

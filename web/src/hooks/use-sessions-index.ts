@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { onSnapshot, type FirestoreError } from 'firebase/firestore';
 import { getFirebaseDb } from '@/lib/firebase/client';
-import { allSessionsQuery, type SessionDoc } from '@/lib/firestore/sessions';
+import { allSessionsQuery, toSessionDoc, type SessionDoc } from '@/lib/firestore/sessions';
 
 interface State {
   index: Map<string, SessionDoc>;
@@ -28,8 +28,8 @@ export function useSessionsIndex(): State & { retry: () => void } {
       (snap) => {
         const index = new Map<string, SessionDoc>();
         snap.docs.forEach((d) => {
-          const s = d.data() as SessionDoc;
-          index.set(s.idAdf, s);
+          const s = toSessionDoc(d.data());
+          if (s.idAdf) index.set(s.idAdf, s);
         });
         setState({ index, loading: false, error: null });
       },

@@ -33,6 +33,50 @@ function make(over: Partial<SessionDoc> & { idAdf: string }): SessionDoc {
   };
 }
 
+/** Session au `counts` ABSENT (backfill interrompu) — simule un doc mirror incomplet. */
+function broken(idAdf: string, over: Partial<SessionDoc> = {}): SessionDoc {
+  const s = make({ idAdf, ...over });
+  return { ...s, counts: undefined as unknown as SessionDoc['counts'] };
+}
+
+describe('robustesse : session avec counts=undefined (doc mirror incomplet)', () => {
+  it('sortSessions urgence : aucun throw, la session sans counts est traitée comme 0', () => {
+    const withRelances = make({ idAdf: '1', counts: { envoyes: 3, signes: 0, nonSignes: 3, participantsConcernes: 3, participantsARelancer: 3 } });
+    const incomplete = broken('2');
+    expect(() => sortSessions([incomplete, withRelances], { key: 'urgence', dir: 'desc' })).not.toThrow();
+    const sorted = sortSessions([incomplete, withRelances], { key: 'urgence', dir: 'desc' });
+    expect(sorted.map((s) => s.idAdf)).toEqual(['1', '2']); // 3 à relancer d'abord, 0 (incomplet) ensuite
+  });
+
+  it('sortSessions par nonSignes : aucun throw', () => {
+    expect(() => sortSessions([broken('a'), make({ idAdf: 'b' })], { key: 'nonSignes', dir: 'asc' })).not.toThrow();
+  });
+
+  it('applyFilters hasRelances : session sans counts = 0 relance → exclue, sans throw', () => {
+    const rows = applyFilters([broken('a'), make({ idAdf: 'b', counts: { envoyes: 1, signes: 0, nonSignes: 1, participantsConcernes: 1, participantsARelancer: 1 } })], {
+      search: '',
+      etape: null,
+      hasRelances: true,
+    });
+    expect(rows.map((s) => s.idAdf)).toEqual(['b']);
+  });
+
+  it('deriveSessions bout-en-bout : un doc incomplet ne crashe pas et n\'apparaît pas faussé', () => {
+    const opts = {
+      filters: { search: '', etape: null, hasRelances: false },
+      sort: { key: 'urgence' as const, dir: 'desc' as const },
+      page: 1,
+      pageSize: 25,
+      todayParis: '2026-06-11',
+    };
+    // dateFin passée → visible dans le cockpit ; counts absent → 0 partout, pas de throw.
+    const incomplete = broken('x', { dateFin: '2026-02-01T00:00:00' });
+    expect(() => deriveSessions([incomplete], opts)).not.toThrow();
+    const d = deriveSessions([incomplete], opts);
+    expect(d.pageItems).toHaveLength(1);
+  });
+});
+
 describe('normalizeText', () => {
   it('minuscule + supprime accents', () => {
     expect(normalizeText('Réalisation ÉTÉ')).toBe('realisation ete');

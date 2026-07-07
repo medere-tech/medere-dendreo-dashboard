@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { onSnapshot, type FirestoreError } from 'firebase/firestore';
 import { getFirebaseDb } from '@/lib/firebase/client';
-import { pendingSignaturesQuery, type SignatureDoc } from '@/lib/firestore/sessions';
+import { pendingSignaturesQuery, toSignatureDoc, type SignatureDoc } from '@/lib/firestore/sessions';
 
 interface State {
   pending: SignatureDoc[];
@@ -24,7 +24,7 @@ export function usePendingSignatures(): State & { retry: () => void } {
     setState((s) => ({ ...s, loading: true, error: null }));
     const unsub = onSnapshot(
       pendingSignaturesQuery(getFirebaseDb()),
-      (snap) => setState({ pending: snap.docs.map((d) => d.data() as SignatureDoc), loading: false, error: null }),
+      (snap) => setState({ pending: snap.docs.map((d) => toSignatureDoc(d.data())), loading: false, error: null }),
       (error) => setState({ pending: [], loading: false, error }),
     );
     return unsub;
