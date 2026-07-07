@@ -17,6 +17,7 @@
 import { loadDendreoEnv, DENDREO } from '../src/config';
 import { DendreoClient } from '../src/dendreo/client';
 import { getSessionSignatureStatus } from '../src/dendreo/signatures';
+import { deriveNumeroCompteProduit, eppConnecte, formatLabel, isACheval, parseHeures } from '../src/dendreo/enrich';
 import { getDb } from '../src/firebase/admin';
 import { recalcSessionCounts, upsertSession, upsertSignature } from '../src/firebase/firestore';
 
@@ -101,22 +102,69 @@ function mapSession(s) {
   const dpcRaw = s.num_session_dpc == null ? '' : String(s.num_session_dpc).trim();
   const numeroSessionDpc = dpcRaw === '' ? null : dpcRaw;
   const compteRaw = s.numero_comptable == null ? '' : String(s.numero_comptable).trim();
-  const numeroCompteProduit = compteRaw === '' ? null : compteRaw;
+  const numeroCompteProduit = compteRaw === '' ? null : compteRaw; // provisoire ; corrigé par les modules (cf. processSession)
+  // Dates "molles" : '' si absentes (jamais null) → la session s'écrit toujours.
+  const dateDebut = normDate(s.date_debut) ?? '';
+  const dateFin = normDate(s.date_fin) ?? '';
   return {
     idAdf: id,
     numeroComplet: s.numero_complet ?? `ADF_${id}`,
     numeroSessionDpc,
     numeroCompteProduit,
     intitule: s.intitule ?? '(sans intitulé)',
-    // Dates "molles" : '' si absentes (jamais null) → la session s'écrit toujours.
-    dateDebut: normDate(s.date_debut) ?? '',
-    dateFin: normDate(s.date_fin) ?? '',
+    dateDebut,
+    dateFin,
     idEtapeProcess: idEtape,
     etape: etapesMap.get(idEtape) ?? `etape_${idEtape || '?'}`,
     idCentre: String(s.id_centre_de_formation ?? ''),
     type: s.type ?? '',
     totalParticipants: Number(s.total_participants ?? 0) || 0,
+    // Enrichissement S5.1b : format + aCheval sont ADF-only (aucune lecture module) ;
+    // eppAmontConnecte/eppAvalConnecte + numeroCompteProduit corrigé = fixés dans
+    // processSession après lecture des modules (cf. enrichWithModules).
+    format: formatLabel(s.mode_organisation),
+    aCheval: isACheval(dateDebut, dateFin),
+    eppAmontConnecte: false,
+    eppAvalConnecte: false,
   };
+}
+
+/** Modules d'une session (1 lecture : lams.php?include=module) → vue pour enrich.ts. */
+async function fetchSessionModules(idAdf) {
+  const lams = asArray(await client.get('lams.php', { id_action_de_formation: idAdf, include: 'module' }));
+  const out = [];
+  const seen = new Set();
+  for (const l of lams) {
+    const m = l.module;
+    if (!m || !m.id_module || seen.has(String(m.id_module))) continue;
+    seen.add(String(m.id_module));
+    out.push({
+      categorie: String(m.id_categorie_module ?? ''),
+      heuresConnectees: parseHeures(m.c_nombre_dheures_connectees),
+      numProgrammeDpc: String(m.num_programme_dpc ?? '').trim(),
+    });
+  }
+  return out;
+}
+
+/**
+ * Enrichit la session par les MODULES (mutation en place) : eppAmont/AvalConnecte
+ * + numeroCompteProduit corrigé (module cœur si l'ADF n'a pas numero_comptable).
+ * Une lecture module KO ne perd JAMAIS la session : on garde les valeurs ADF-only.
+ */
+async function enrichWithModules(session) {
+  try {
+    const mods = await fetchSessionModules(session.idAdf);
+    session.eppAmontConnecte = eppConnecte(mods, 'amont');
+    session.eppAvalConnecte = eppConnecte(mods, 'aval');
+    // deriveNumeroCompteProduit garde l'ADF s'il est renseigné (session.numeroCompteProduit
+    // non-null), sinon prend le num du module cœur.
+    session.numeroCompteProduit = deriveNumeroCompteProduit(session.numeroCompteProduit, mods);
+    return { modulesRead: 1 };
+  } catch (err) {
+    log(`  ! modules illisibles idAdf=${session.idAdf} (enrichissement partiel) : ${shortReason(err)}`);
+    return { modulesRead: 0 };
+  }
 }
 
 // entry = AttestationLine (dates déjà normalisées ISO|null par signatures.ts).
@@ -154,6 +202,7 @@ const SESSION_FIELDS = [
   'id_action_de_formation', 'numero_complet', 'intitule', 'date_debut', 'date_fin',
   'id_etape_process', 'total_participants', 'id_centre_de_formation', 'type',
   'num_session_dpc', 'numero_comptable', // N° session DPC (toujours présent) + N° compte produit (optionnel)
+  'mode_organisation', // S5.1b : source du libellé Format (niveau session)
 ].join(',');
 
 /**
@@ -199,6 +248,9 @@ async function processSession(session) {
     const st = await getSessionSignatureStatus(session.idAdf, client); // Dendreo (read-only)
     const counts = st.counts; // { envoyes, signes, nonSignes, participantsConcernes, participantsARelancer }
     let ignoredLines = st.ignored; // lignes trackées sans doctype_id (dérivation) → déjà écartées
+
+    // Enrichissement modules (S5.1b) : +1 lecture Dendreo/session (lams.php?include=module).
+    await enrichWithModules(session);
 
     if (!args.dryRun) {
       try {

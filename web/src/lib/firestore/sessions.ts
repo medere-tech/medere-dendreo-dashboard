@@ -32,6 +32,10 @@ export interface SessionDoc {
   idCentre: string;
   type: string;
   totalParticipants: number;
+  format: string; // libellé Format (Présentiel/Mixte/E-learning/Classe virtuelle) — S5.1b
+  aCheval: boolean; // année(dateDebut) != année(dateFin)
+  eppAmontConnecte: boolean; // module EPP amont (cat 22) avec heures connectées > 0
+  eppAvalConnecte: boolean; // module EPP aval (cat 21) avec heures connectées > 0
   counts: Counts;
   oldestPendingSentDate: string | null;
   lastSyncedAt: string;
@@ -54,6 +58,7 @@ export const EMPTY_COUNTS: Counts = {
 const asStr = (v: unknown, fallback = ''): string => (typeof v === 'string' ? v : fallback);
 const asNullableStr = (v: unknown): string | null => (typeof v === 'string' ? v : null);
 const asNum = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
+const asBool = (v: unknown): boolean => v === true; // défaut false pour un doc pré-S5.1b
 
 function normalizeCounts(raw: unknown): Counts {
   const c = (raw ?? {}) as Partial<Record<keyof Counts, unknown>>;
@@ -86,6 +91,10 @@ export function toSessionDoc(raw: DocumentData): SessionDoc {
     idCentre: asStr(raw.idCentre),
     type: asStr(raw.type),
     totalParticipants: asNum(raw.totalParticipants),
+    format: asStr(raw.format),
+    aCheval: asBool(raw.aCheval),
+    eppAmontConnecte: asBool(raw.eppAmontConnecte),
+    eppAvalConnecte: asBool(raw.eppAvalConnecte),
     counts: normalizeCounts(raw.counts),
     oldestPendingSentDate: asNullableStr(raw.oldestPendingSentDate),
     lastSyncedAt: asStr(raw.lastSyncedAt),

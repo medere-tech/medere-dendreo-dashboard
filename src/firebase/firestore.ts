@@ -35,6 +35,9 @@ function assertNullableString(v: unknown, name: string): asserts v is string | n
 function assertStringType(v: unknown, name: string): asserts v is string {
   if (typeof v !== 'string') throw new Error(`Champ doit être une string : ${name}`);
 }
+function assertBoolean(v: unknown, name: string): asserts v is boolean {
+  if (typeof v !== 'boolean') throw new Error(`Champ doit être un booléen : ${name}`);
+}
 function assertStatus(v: unknown): asserts v is SignatureStatus {
   if (typeof v !== 'string' || !STATUSES.includes(v as SignatureStatus)) throw new Error(`status invalide (attendu signed|pending) : ${String(v)}`);
 }
@@ -56,6 +59,10 @@ function validateSessionInput(s: SessionUpsertInput): void {
   assertStringType(s.etape, 'etape');
   assertStringType(s.idCentre, 'idCentre');
   assertStringType(s.type, 'type');
+  assertStringType(s.format, 'format'); // libellé Format, toléré vide
+  assertBoolean(s.aCheval, 'aCheval');
+  assertBoolean(s.eppAmontConnecte, 'eppAmontConnecte');
+  assertBoolean(s.eppAvalConnecte, 'eppAvalConnecte');
   assertNumber(s.totalParticipants, 'totalParticipants');
 }
 

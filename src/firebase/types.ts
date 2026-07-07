@@ -25,6 +25,11 @@ export interface SessionDoc {
   idCentre: string;
   type: string;
   totalParticipants: number;
+  // --- Enrichissement S5.1b (cf. docs/recon-s5-findings.md) -------------------
+  format: string; // libellé Format depuis mode_organisation (Présentiel/Mixte/E-learning/Classe virtuelle)
+  aCheval: boolean; // année(dateDebut) != année(dateFin)
+  eppAmontConnecte: boolean; // module id_categorie_module=22 avec heures connectées > 0
+  eppAvalConnecte: boolean; // module id_categorie_module=21 avec heures connectées > 0
   counts: Counts;
   oldestPendingSentDate: string | null;
   lastSyncedAt: string;

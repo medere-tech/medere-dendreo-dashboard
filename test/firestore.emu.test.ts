@@ -36,6 +36,10 @@ const session = (idAdf: string): SessionUpsertInput => ({
   idCentre: '1',
   type: 'inter',
   totalParticipants: 4,
+  format: 'Mixte',
+  aCheval: false,
+  eppAmontConnecte: false,
+  eppAvalConnecte: false,
 });
 
 const sig = (idAdf: string, idParticipant: string, over: Partial<SignatureUpsertInput>): SignatureUpsertInput => ({
