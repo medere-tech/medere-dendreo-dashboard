@@ -103,6 +103,11 @@ describe('matchesSearch', () => {
   it('numeroCompteProduit null : ne matche pas et ne plante pas', () => {
     expect(matchesSearch(s, '92622626015')).toBe(false);
   });
+  it('matche sur le format (accent-insensible)', () => {
+    expect(matchesSearch(make({ idAdf: '9', format: 'Classe virtuelle' }), 'classe virtuelle')).toBe(true);
+    expect(matchesSearch(make({ idAdf: '9', format: 'Présentiel' }), 'presentiel')).toBe(true);
+    expect(matchesSearch(make({ idAdf: '9', format: 'E-learning' }), 'mixte')).toBe(false);
+  });
   it('numeroCompteProduit présent : matche', () => {
     const c = make({ idAdf: '2', numeroCompteProduit: '92622626015' });
     expect(matchesSearch(c, '92622626015')).toBe(true);

@@ -83,7 +83,7 @@ export function matchesSearch(s: SessionDoc, rawQuery: string): boolean {
   const q = normalizeText(rawQuery).trim();
   if (!q) return true;
   const haystack = normalizeText(
-    [s.numeroSessionDpc ?? '', s.numeroCompteProduit ?? '', s.numeroComplet, s.intitule, s.etape].join(' '),
+    [s.numeroSessionDpc ?? '', s.numeroCompteProduit ?? '', s.numeroComplet, s.intitule, s.etape, s.format].join(' '),
   );
   return q.split(/\s+/).every((token) => haystack.includes(token));
 }

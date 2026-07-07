@@ -45,6 +45,16 @@ export function IconSearch({ className = base }: P) {
   );
 }
 
+export function IconExternalLink({ className = base }: P) {
+  return (
+    <svg className={className} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
+      <path d="M9 3h4v4" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M13 3l-6 6" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M12 9.5V13H3V4h3.5" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
 export function IconChevronLeft({ className = base }: P) {
   return (
     <svg className={className} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true">
