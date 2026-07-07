@@ -2,6 +2,7 @@ import { EMPTY_COUNTS, type Counts, type SessionDoc } from '@/lib/firestore/sess
 import type { RelanceRow } from './relance';
 import { parisDayOfInstant } from '@/lib/time';
 import { buildCsv } from '@/lib/csv';
+import { suiviSignaturesUrl } from '@/lib/dendreo';
 
 /**
  * Mapping CSV « Ops » (calqué sur le Google Sheet de Déthié). Logique PURE et
@@ -42,7 +43,7 @@ export function signaturesSummary(c: Counts): string {
 export const SESSIONS_CSV_HEADERS = [
   'DPC', 'Intitulé', 'N° CP', 'Session', 'Organisation', 'Début', 'Fin', 'EPP CO/NC', 'Cheval?',
   'Date de dépôt', 'Montant €', 'Date de paiement', 'Signatures', 'Commentaire', 'Relance',
-  'Attestation manquante', 'Dendreo', 'Dossier',
+  'Attestation manquante', 'Dendreo', 'Dossier', 'Lien stockage',
 ] as const;
 
 export function sessionToCsvRow(s: SessionDoc): string[] {
@@ -66,6 +67,7 @@ export function sessionToCsvRow(s: SessionDoc): string[] {
     '', // Attestation manquante (Ops)
     '', // Dendreo         (Ops)
     '', // Dossier         (Ops)
+    s.idAdf ? suiviSignaturesUrl(s.idAdf) : '', // Lien stockage — constante partagée, jamais reconstruit
   ];
 }
 

@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import type { SessionDoc } from '@/lib/firestore/sessions';
 import type { RelanceRow } from './relance';
+import { suiviSignaturesUrl } from '@/lib/dendreo';
 import {
   RELANCE_CSV_HEADERS,
   SESSIONS_CSV_HEADERS,
@@ -64,13 +65,13 @@ describe('COCKPIT — colonnes & mapping', () => {
     expect(SESSIONS_CSV_HEADERS).toEqual([
       'DPC', 'Intitulé', 'N° CP', 'Session', 'Organisation', 'Début', 'Fin', 'EPP CO/NC', 'Cheval?',
       'Date de dépôt', 'Montant €', 'Date de paiement', 'Signatures', 'Commentaire', 'Relance',
-      'Attestation manquante', 'Dendreo', 'Dossier',
+      'Attestation manquante', 'Dendreo', 'Dossier', 'Lien stockage',
     ]);
   });
 
-  it('sessionToCsvRow : DPC vide, dates JJ/MM/AA, EPP, cheval, signatures, colonnes Ops vides', () => {
-    const row = sessionToCsvRow(session({ aCheval: true, eppAmontConnecte: true }));
-    expect(row).toHaveLength(SESSIONS_CSV_HEADERS.length);
+  it('sessionToCsvRow : DPC vide, dates JJ/MM/AA, EPP, cheval, signatures, colonnes Ops vides, lien stockage', () => {
+    const row = sessionToCsvRow(session({ idAdf: '2656', aCheval: true, eppAmontConnecte: true }));
+    expect(row).toHaveLength(SESSIONS_CSV_HEADERS.length); // 19
     expect(row[0]).toBe(''); // DPC (à venir)
     expect(row[1]).toBe('Prévention'); // Intitulé
     expect(row[2]).toBe('92622525478'); // N° CP
@@ -83,6 +84,20 @@ describe('COCKPIT — colonnes & mapping', () => {
     expect(row[12]).toBe('2 à relancer'); // Signatures
     // colonnes Ops vides
     expect([row[9], row[10], row[11], row[13], row[14], row[15], row[16], row[17]]).toEqual(['', '', '', '', '', '', '', '']);
+    // Lien stockage (dernière colonne) = suiviSignaturesUrl, jamais reconstruit à la main
+    expect(row[18]).toBe(suiviSignaturesUrl('2656'));
+    expect(row[18]).toBe('https://pro.dendreo.com/nes_formation/formations/2656/suivi-signatures');
+  });
+
+  it('Lien stockage vide si idAdf absent', () => {
+    expect(sessionToCsvRow(session({ idAdf: '' }))[18]).toBe('');
+  });
+
+  it('Lien stockage : URL non "quotée" (pas de ; " ou saut de ligne) dans le CSV', () => {
+    const csv = sessionsToCsv([session({ idAdf: '2656' })]);
+    // l'URL apparaît telle quelle, sans guillemets parasites
+    expect(csv).toContain(';https://pro.dendreo.com/nes_formation/formations/2656/suivi-signatures');
+    expect(csv).not.toContain('"https://');
   });
 
   it('valeurs nulles → cellules vides (pas de crash)', () => {
