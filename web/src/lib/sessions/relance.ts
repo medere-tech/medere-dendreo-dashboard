@@ -112,6 +112,7 @@ export interface DeriveRelanceOptions {
 }
 
 export interface DerivedRelance extends PageView<RelanceRow> {
+  allRows: RelanceRow[]; // TOUTE la liste filtrée+triée (toutes pages) → export CSV
   totals: RelanceTotals; // GRAND TOTAL figé (ne suit PAS la recherche)
 }
 
@@ -125,5 +126,5 @@ export function deriveRelance(
   const searched = filterRelance(all, opts.search);
   const sorted = sortRelance(searched, opts.sortDir);
   const view = paginate(sorted, opts.page, opts.pageSize);
-  return { ...view, totals };
+  return { ...view, allRows: sorted, totals };
 }

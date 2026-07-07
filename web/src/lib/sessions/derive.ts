@@ -119,6 +119,7 @@ export interface DeriveOptions {
 
 export interface DerivedSessions {
   pageItems: SessionDoc[];
+  allItems: SessionDoc[]; // TOUTE la liste filtrée+triée (toutes pages) → export CSV
   total: number; // après filtres utilisateur
   relanceTotal: number; // Σ nonSignes sur les sessions filtrées (compteur "Y à relancer")
   cockpitTotal: number; // sessions "terminées" affichables (avant filtres utilisateur)
@@ -283,5 +284,5 @@ export function deriveSessions(sessions: readonly SessionDoc[], opts: DeriveOpti
   const sorted = sortSessions(filtered, opts.sort);
   const view = paginate(sorted, opts.page, opts.pageSize);
   const relanceTotal = filtered.reduce((n, s) => n + countsOf(s).nonSignes, 0);
-  return { ...view, relanceTotal, cockpitTotal: visible.length, etapes: distinctEtapes(visible) };
+  return { ...view, allItems: sorted, relanceTotal, cockpitTotal: visible.length, etapes: distinctEtapes(visible) };
 }

@@ -8,6 +8,9 @@ import { deriveRelance, type RelanceSortDir } from '@/lib/sessions/relance';
 import { IconSearch } from '@/components/icons';
 import { PaginationBar } from '@/components/sessions/toolbar';
 import { SessionsSkeleton } from '@/components/sessions/skeleton';
+import { ExportButton } from '@/components/sessions/export-button';
+import { downloadCsv } from '@/lib/csv';
+import { relanceCsvFilename, relanceToCsv } from '@/lib/sessions/export';
 import { RelanceTable } from './relance-table';
 import { RelanceCard } from './relance-card';
 
@@ -49,6 +52,12 @@ export function RelanceView() {
     indexState.retry();
   }
 
+  // Export CSV : exactement les lignes filtrées (recherche appliquée), toutes pages.
+  function onExport() {
+    if (derived.allRows.length === 0) return;
+    downloadCsv(relanceCsvFilename(todayParis), relanceToCsv(derived.allRows));
+  }
+
   if (loading) return <SessionsSkeleton />;
 
   if (error) {
@@ -76,22 +85,25 @@ export function RelanceView() {
           · <span className="tabular-nums text-ink">{derived.totals.participants}</span> participants
         </p>
 
-        <div className="relative w-full max-w-xs">
-          <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-faint">
-            <IconSearch />
-          </span>
-          <input
-            ref={searchRef}
-            type="search"
-            value={search}
-            onChange={(e) => {
-              setSearch(e.target.value);
-              setPage(1);
-            }}
-            placeholder="Rechercher…  ( / )"
-            aria-label="Rechercher une relance (nom, session, document)"
-            className="w-full rounded-xl border border-hairline bg-surface py-2.5 pl-9 pr-3 text-sm text-ink placeholder:text-faint transition focus:border-ink"
-          />
+        <div className="flex items-center gap-2.5">
+          <div className="relative w-full max-w-xs">
+            <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-faint">
+              <IconSearch />
+            </span>
+            <input
+              ref={searchRef}
+              type="search"
+              value={search}
+              onChange={(e) => {
+                setSearch(e.target.value);
+                setPage(1);
+              }}
+              placeholder="Rechercher…  ( / )"
+              aria-label="Rechercher une relance (nom, session, document)"
+              className="w-full rounded-xl border border-hairline bg-surface py-2.5 pl-9 pr-3 text-sm text-ink placeholder:text-faint transition focus:border-ink"
+            />
+          </div>
+          <ExportButton onExport={onExport} disabled={derived.total === 0} />
         </div>
       </div>
 

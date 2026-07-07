@@ -11,6 +11,8 @@ import { SessionCard } from './session-card';
 import { SignatureDrawer } from './signature-drawer';
 import { FiltersBar } from './filters-bar';
 import { PaginationBar } from './toolbar';
+import { downloadCsv } from '@/lib/csv';
+import { sessionsCsvFilename, sessionsToCsv } from '@/lib/sessions/export';
 
 const DEFAULT_SORT: SortState = { key: 'urgence', dir: 'desc' };
 const NUMERIC_KEYS: SortKey[] = ['totalParticipants', 'nonSignes'];
@@ -63,6 +65,12 @@ export function SessionsView() {
     [sessions, filters, sort, page, pageSize, todayParis],
   );
 
+  // Export CSV : EXACTEMENT les lignes filtrées affichées (toutes pages), pas la base.
+  function onExport() {
+    if (derived.allItems.length === 0) return;
+    downloadCsv(sessionsCsvFilename(todayParis), sessionsToCsv(derived.allItems));
+  }
+
   function onSort(key: SortKey) {
     setSort((cur) =>
       cur.key === key
@@ -107,6 +115,7 @@ export function SessionsView() {
           setSort(DEFAULT_SORT);
           setPage(1);
         }}
+        onExport={onExport}
       />
 
       {sessions.length === 0 ? (

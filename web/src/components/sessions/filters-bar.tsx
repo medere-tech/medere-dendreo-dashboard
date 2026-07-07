@@ -10,6 +10,7 @@ import {
   type SortKey,
 } from '@/lib/sessions/derive';
 import { formatDateFr } from '@/lib/format';
+import { ExportButton } from './export-button';
 
 /** Les 4 libellés Format (cf. docs/recon-s5-findings.md §1). */
 const FORMAT_OPTIONS = ['Présentiel', 'Mixte', 'E-learning', 'Classe virtuelle'];
@@ -44,6 +45,7 @@ interface Props {
   relanceTotal: number; // Σ à relancer après filtres
   sortKey: SortKey;
   onResetUrgence: () => void;
+  onExport: () => void; // export CSV des lignes filtrées
 }
 
 /** Nb de filtres "avancés" actifs (ceux du panneau) → pastille du bouton Filtres. */
@@ -69,6 +71,7 @@ export function FiltersBar({
   relanceTotal,
   sortKey,
   onResetUrgence,
+  onExport,
 }: Props) {
   const [open, setOpen] = useState(false);
   const nAdvanced = panelCount(filters);
@@ -122,10 +125,13 @@ export function FiltersBar({
         </button>
 
         {/* Compteur dynamique — reflète les filtres. Orange seulement sur "à relancer". */}
-        <div className="ml-auto text-sm tabular-nums text-muted">
-          <span className="font-medium text-ink">{total}</span> sessions
-          <span className="mx-1.5 text-faint">·</span>
-          <span className={relanceTotal > 0 ? 'font-semibold text-accent' : 'text-faint'}>{relanceTotal}</span> à relancer
+        <div className="ml-auto flex items-center gap-3">
+          <div className="text-sm tabular-nums text-muted">
+            <span className="font-medium text-ink">{total}</span> sessions
+            <span className="mx-1.5 text-faint">·</span>
+            <span className={relanceTotal > 0 ? 'font-semibold text-accent' : 'text-faint'}>{relanceTotal}</span> à relancer
+          </div>
+          <ExportButton onExport={onExport} disabled={total === 0} />
         </div>
       </div>
 
