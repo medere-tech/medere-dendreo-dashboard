@@ -7,6 +7,8 @@ import {
   SIGNATURE_FILTER_LABELS,
   countForFilter,
   signaturesForSessionQuery,
+  signatureViewerHref,
+  toSignatureDoc,
   type SessionDoc,
   type SignatureDoc,
   type SignatureFilter,
@@ -70,7 +72,9 @@ export function SignatureDrawer({
     getDocs(signaturesForSessionQuery(getFirebaseDb(), session.idAdf, filter))
       .then((snap) => {
         if (!alive) return;
-        setRows(sortSignatures(snap.docs.map((d) => d.data() as SignatureDoc)));
+        // Normalisation défensive à la lecture (comme la vue "À relancer") : viewerUrl
+        // lu par la MÊME voie que la vue qui marche, jamais un cast brut divergent.
+        setRows(sortSignatures(snap.docs.map((d) => toSignatureDoc(d.data()))));
       })
       .catch((e: FirestoreError) => {
         if (alive) setError(e);
@@ -177,6 +181,7 @@ function SignatureRow({ row }: { row: SignatureDoc }) {
   const signed = row.status === 'signed';
   const date = signed ? row.signatureDate : row.sentDate;
   const dateLabel = signed ? 'Signée le' : 'Envoyée le';
+  const href = signatureViewerHref(row); // = row.viewerUrl (jamais reconstruit) ; null si absent
   return (
     <li className="flex items-center justify-between gap-3 py-3">
       <div className="min-w-0">
@@ -186,9 +191,9 @@ function SignatureRow({ row }: { row: SignatureDoc }) {
           {dateLabel} {formatInstantParisFr(date)}
         </p>
       </div>
-      {row.viewerUrl ? (
+      {href ? (
         <a
-          href={row.viewerUrl}
+          href={href}
           target="_blank"
           rel="noreferrer"
           className="shrink-0 rounded-lg border border-hairline bg-surface px-2.5 py-1.5 text-xs font-medium text-ink transition hover:bg-canvas"

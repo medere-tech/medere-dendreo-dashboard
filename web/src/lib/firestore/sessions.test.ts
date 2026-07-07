@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { EMPTY_COUNTS, toSessionDoc, toSignatureDoc } from './sessions';
+import { EMPTY_COUNTS, signatureViewerHref, toSessionDoc, toSignatureDoc } from './sessions';
 
 describe('toSessionDoc — normalisation défensive à la lecture', () => {
   it('counts absent → EMPTY_COUNTS (0 partout), pas de undefined', () => {
@@ -37,6 +37,23 @@ describe('toSessionDoc — normalisation défensive à la lecture', () => {
     };
     expect(toSessionDoc(raw).counts.nonSignes).toBe(3);
     expect(toSessionDoc(raw).numeroCompteProduit).toBe('92622626015');
+  });
+});
+
+describe('signatureViewerHref — lien = viewerUrl du doc, jamais reconstruit', () => {
+  it('renvoie EXACTEMENT le viewerUrl stocké (aucune base/id ajoutée)', () => {
+    const url = 'https://public.dendreo.com/AbC123/media/XyZ789';
+    expect(signatureViewerHref({ viewerUrl: url })).toBe(url);
+  });
+  it('même valeur pour un doc pending ou signed (le statut ne change pas le lien)', () => {
+    const url = 'https://public.dendreo.com/t/media/m';
+    expect(signatureViewerHref(toSignatureDoc({ status: 'pending', viewerUrl: url }))).toBe(url);
+    expect(signatureViewerHref(toSignatureDoc({ status: 'signed', viewerUrl: url }))).toBe(url);
+  });
+  it('absent / vide / null → null (pas de lien mort)', () => {
+    expect(signatureViewerHref({ viewerUrl: null })).toBeNull();
+    expect(signatureViewerHref({ viewerUrl: '' })).toBeNull();
+    expect(signatureViewerHref({ viewerUrl: '   ' })).toBeNull();
   });
 });
 

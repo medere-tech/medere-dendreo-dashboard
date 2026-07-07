@@ -141,6 +141,17 @@ export function toSignatureDoc(raw: DocumentData): SignatureDoc {
   };
 }
 
+/**
+ * Lien « Ouvrir dans Dendreo » d'une attestation. SOURCE UNIQUE de vérité pour le
+ * lien de visualisation, partagée par la vue « À relancer » ET le drawer : on
+ * renvoie EXACTEMENT le `viewerUrl` du doc signature (jamais une URL reconstruite
+ * à la main). Absent/vide → `null` (l'appelant masque/désactive, pas de lien mort).
+ */
+export function signatureViewerHref(doc: Pick<SignatureDoc, 'viewerUrl'>): string | null {
+  const u = doc.viewerUrl;
+  return typeof u === 'string' && u.trim() !== '' ? u : null;
+}
+
 /** Filtre du drawer : quel chiffre a été cliqué. */
 export type SignatureFilter = 'envoyes' | 'signes' | 'nonSignes';
 
