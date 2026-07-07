@@ -9,6 +9,7 @@
     "backfill": "tsx scripts/backfill.mjs",
     "clear-mirror": "tsx scripts/clear-mirror.mjs",
     "inspect-etapes": "tsx scripts/inspect-etapes.mjs",
+    "inspect-relance": "tsx scripts/inspect-relance.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
