@@ -1,6 +1,6 @@
 import type { SessionDoc, SignatureDoc } from '@/lib/firestore/sessions';
 import { daysBetween, parisDayOfInstant } from '@/lib/time';
-import { isEchecEtape, normalizeText, paginate, type PageView } from './derive';
+import { EN_RETARD_SEUIL_JOURS, isEchecEtape, normalizeText, paginate, type PageView } from './derive';
 
 /**
  * Logique PURE de la vue « À relancer » (ui-spec.md §4.2) : jointure
@@ -23,9 +23,25 @@ export interface RelanceRow {
   numeroSessionDpc: string | null; // vient de la session (null si session absente → fail-open)
   sessionIntitule: string;
   sessionNumeroComplet: string;
+  sessionDateDebut: string; // via jointure session (fallback doc signature) — filtre période
+  sessionDateFin: string; // via jointure session uniquement ('' si session absente)
   sentDate: string | null; // instant UTC-Z brut (tri)
+  sentDay: string | null; // jour Paris de l'envoi "YYYY-MM-DD" (filtre date d'envoi)
   ageDays: number | null; // ancienneté en jours (jour Paris → todayParis)
   viewerUrl: string | null;
+}
+
+/** Type de document d'une attestation (S7). Buckets prouvés (scan Dendreo) :
+ *  EPP amont (doctype 165), EPP aval (166), sinon PI/formation continue (172/173/177). */
+export type RelanceDocType = 'EPP amont' | 'EPP aval' | 'PI (formation continue)';
+export const RELANCE_DOC_TYPES: readonly RelanceDocType[] = ['EPP amont', 'EPP aval', 'PI (formation continue)'];
+
+/** Classe une attestation par son NOM (robuste aux variantes d'année/doctype). */
+export function relanceDocType(documentName: string): RelanceDocType {
+  const n = normalizeText(documentName);
+  if (/epp.*amont|audit.*clinique.*amont/.test(n)) return 'EPP amont';
+  if (/epp.*aval|audit.*clinique.*aval/.test(n)) return 'EPP aval';
+  return 'PI (formation continue)'; // catch-all (100% du reste = "Attestation sur l'honneur PI")
 }
 
 export interface RelanceTotals {
@@ -58,7 +74,10 @@ export function buildRelanceRows(
       numeroSessionDpc: session?.numeroSessionDpc ?? null,
       sessionIntitule: session?.intitule ?? sig.sessionIntitule,
       sessionNumeroComplet: session?.numeroComplet ?? sig.sessionNumeroComplet,
+      sessionDateDebut: session?.dateDebut ?? sig.sessionDateDebut ?? '',
+      sessionDateFin: session?.dateFin ?? '',
       sentDate: sig.sentDate,
+      sentDay: sentDay || null,
       ageDays: sentDay ? daysBetween(sentDay, todayParis) : null,
       viewerUrl: sig.viewerUrl,
     });
@@ -90,21 +109,89 @@ export function sortRelance(rows: readonly RelanceRow[], dir: RelanceSortDir): R
   });
 }
 
-/** Recherche multi-tokens (ET) sur nom / session / document. Accent-insensible. */
-export function filterRelance(rows: readonly RelanceRow[], rawQuery: string): RelanceRow[] {
+/** Une ligne matche-t-elle une recherche multi-tokens (ET) ? `haystack` fourni. */
+function matchesTokens(haystack: string, rawQuery: string): boolean {
   const q = normalizeText(rawQuery).trim();
-  if (!q) return rows.slice();
-  const tokens = q.split(/\s+/);
+  if (!q) return true;
+  const hay = normalizeText(haystack);
+  return q.split(/\s+/).every((t) => hay.includes(t));
+}
+
+/** Recherche globale (nom / session / document). Accent-insensible, multi-tokens. */
+export function relanceMatchesSearch(r: RelanceRow, rawQuery: string): boolean {
+  return matchesTokens([r.nom, r.numeroSessionDpc ?? '', r.sessionIntitule, r.sessionNumeroComplet, r.documentName].join(' '), rawQuery);
+}
+
+/** Recherche dédiée "session" (n° DPC / intitulé / n° complet). */
+export function relanceMatchesSession(r: RelanceRow, rawQuery: string): boolean {
+  return matchesTokens([r.numeroSessionDpc ?? '', r.sessionIntitule, r.sessionNumeroComplet].join(' '), rawQuery);
+}
+
+/** Recherche seule (compat) : filtre les lignes sur la recherche globale. */
+export function filterRelance(rows: readonly RelanceRow[], rawQuery: string): RelanceRow[] {
+  return rows.filter((r) => relanceMatchesSearch(r, rawQuery));
+}
+
+// --- Filtres S7 (combinés en ET, 100% mémoire) ------------------------------
+export interface RelanceFilters {
+  search: string; // recherche globale (existante)
+  sessionQuery: string; // #1 recherche dédiée session (DPC + intitulé)
+  sentFrom: string | null; // #2 date d'envoi — du (jour Paris "YYYY-MM-DD")
+  sentTo: string | null; // #2 date d'envoi — au
+  sessionFrom: string | null; // #3 période de session — du (chevauchement)
+  sessionTo: string | null; // #3 période de session — au
+  enRetard30: boolean; // #4 ancienneté > 30 j (sur ageDays)
+  docTypes: string[]; // #5 multi-select type (RELANCE_DOC_TYPES)
+}
+
+export const NO_RELANCE_FILTERS: RelanceFilters = {
+  search: '',
+  sessionQuery: '',
+  sentFrom: null,
+  sentTo: null,
+  sessionFrom: null,
+  sessionTo: null,
+  enRetard30: false,
+  docTypes: [],
+};
+
+export function hasActiveRelanceFilters(f: RelanceFilters): boolean {
+  return (
+    f.search.trim() !== '' ||
+    f.sessionQuery.trim() !== '' ||
+    f.sentFrom !== null ||
+    f.sentTo !== null ||
+    f.sessionFrom !== null ||
+    f.sessionTo !== null ||
+    f.enRetard30 ||
+    f.docTypes.length > 0
+  );
+}
+
+export function applyRelanceFilters(rows: readonly RelanceRow[], filters: RelanceFilters): RelanceRow[] {
   return rows.filter((r) => {
-    const hay = normalizeText(
-      [r.nom, r.numeroSessionDpc ?? '', r.sessionIntitule, r.sessionNumeroComplet, r.documentName].join(' '),
-    );
-    return tokens.every((t) => hay.includes(t));
+    // #1 session (DPC / intitulé)
+    if (filters.sessionQuery.trim() && !relanceMatchesSession(r, filters.sessionQuery)) return false;
+    // #2 date d'envoi (jour Paris) — bornes incluses ; sans jour d'envoi → exclue si borne posée
+    if (filters.sentFrom && (!r.sentDay || r.sentDay < filters.sentFrom)) return false;
+    if (filters.sentTo && (!r.sentDay || r.sentDay > filters.sentTo)) return false;
+    // #3 période de session (chevauchement : début ≤ au ET fin ≥ du)
+    const sd = r.sessionDateDebut.slice(0, 10);
+    const sf = r.sessionDateFin.slice(0, 10);
+    if (filters.sessionFrom && (!sf || sf < filters.sessionFrom)) return false;
+    if (filters.sessionTo && (!sd || sd > filters.sessionTo)) return false;
+    // #4 en retard > seuil (sur ancienneté déjà calculée)
+    if (filters.enRetard30 && !(r.ageDays !== null && r.ageDays > EN_RETARD_SEUIL_JOURS)) return false;
+    // #5 type de document
+    if (filters.docTypes.length > 0 && !filters.docTypes.includes(relanceDocType(r.documentName))) return false;
+    // recherche globale
+    if (!relanceMatchesSearch(r, filters.search)) return false;
+    return true;
   });
 }
 
 export interface DeriveRelanceOptions {
-  search: string;
+  filters: RelanceFilters;
   sortDir: RelanceSortDir;
   page: number;
   pageSize: number;
@@ -113,7 +200,8 @@ export interface DeriveRelanceOptions {
 
 export interface DerivedRelance extends PageView<RelanceRow> {
   allRows: RelanceRow[]; // TOUTE la liste filtrée+triée (toutes pages) → export CSV
-  totals: RelanceTotals; // GRAND TOTAL figé (ne suit PAS la recherche)
+  totals: RelanceTotals; // GRAND TOTAL figé (avant filtres) → état "tout est signé"
+  filteredTotals: RelanceTotals; // compteur DYNAMIQUE (reflète les filtres)
 }
 
 export function deriveRelance(
@@ -122,9 +210,10 @@ export function deriveRelance(
   opts: DeriveRelanceOptions,
 ): DerivedRelance {
   const all = buildRelanceRows(pending, sessionsById, opts.todayParis);
-  const totals = relanceTotals(all); // figé, calculé avant la recherche
-  const searched = filterRelance(all, opts.search);
-  const sorted = sortRelance(searched, opts.sortDir);
+  const totals = relanceTotals(all); // figé (avant filtres)
+  const filtered = applyRelanceFilters(all, opts.filters);
+  const filteredTotals = relanceTotals(filtered);
+  const sorted = sortRelance(filtered, opts.sortDir);
   const view = paginate(sorted, opts.page, opts.pageSize);
-  return { ...view, allRows: sorted, totals };
+  return { ...view, allRows: sorted, totals, filteredTotals };
 }

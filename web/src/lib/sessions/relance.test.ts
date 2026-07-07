@@ -1,6 +1,20 @@
 import { describe, it, expect } from 'vitest';
 import type { SessionDoc, SignatureDoc } from '@/lib/firestore/sessions';
-import { buildRelanceRows, deriveRelance, filterRelance, relanceTotals, sortRelance } from './relance';
+import {
+  applyRelanceFilters,
+  buildRelanceRows,
+  deriveRelance,
+  filterRelance,
+  hasActiveRelanceFilters,
+  NO_RELANCE_FILTERS,
+  relanceDocType,
+  relanceTotals,
+  sortRelance,
+  type RelanceFilters,
+} from './relance';
+
+/** Filtres = base "aucun filtre" + surcharge. */
+const RF = (over: Partial<RelanceFilters> = {}): RelanceFilters => ({ ...NO_RELANCE_FILTERS, ...over });
 
 function sig(over: Partial<SignatureDoc> & { idParticipant: string; doctypeId: string }): SignatureDoc {
   return {
@@ -27,8 +41,8 @@ function session(over: Partial<SessionDoc> & { idAdf: string }): SessionDoc {
     numeroSessionDpc: over.numeroSessionDpc ?? '26.001',
     numeroCompteProduit: null,
     intitule: over.intitule ?? 'Prévention des risques',
-    dateDebut: '2026-01-01T00:00:00',
-    dateFin: '2026-02-01T00:00:00',
+    dateDebut: over.dateDebut ?? '2026-01-01T00:00:00',
+    dateFin: over.dateFin ?? '2026-02-01T00:00:00',
     idEtapeProcess: over.idEtapeProcess ?? '6',
     etape: over.etape ?? 'Réalisation',
     idCentre: '1',
@@ -56,8 +70,8 @@ describe('robustesse : session jointe avec counts=undefined (doc mirror incomple
     const pending = [sig({ idParticipant: 'p1', doctypeId: '165', idAdf: 'inc' })];
     const incomplete = { ...session({ idAdf: 'inc', numeroSessionDpc: '26.099' }), counts: undefined as unknown as SessionDoc['counts'] };
     const idx = new Map<string, SessionDoc>([['inc', incomplete]]);
-    expect(() => deriveRelance(pending, idx, { search: '', sortDir: 'asc', page: 1, pageSize: 25, todayParis: TODAY })).not.toThrow();
-    const d = deriveRelance(pending, idx, { search: '', sortDir: 'asc', page: 1, pageSize: 25, todayParis: TODAY });
+    expect(() => deriveRelance(pending, idx, { filters: RF(), sortDir: 'asc', page: 1, pageSize: 25, todayParis: TODAY })).not.toThrow();
+    const d = deriveRelance(pending, idx, { filters: RF(), sortDir: 'asc', page: 1, pageSize: 25, todayParis: TODAY });
     expect(d.pageItems).toHaveLength(1);
     expect(d.pageItems[0]!.numeroSessionDpc).toBe('26.099');
   });
@@ -143,9 +157,72 @@ describe('relanceTotals / deriveRelance', () => {
     const idx = indexOf([session({ idAdf: 'S1' })]);
     expect(relanceTotals(buildRelanceRows(pending, idx, TODAY))).toEqual({ attestations: 3, participants: 2 });
 
-    const d = deriveRelance(pending, idx, { search: 'alice', sortDir: 'asc', page: 1, pageSize: 25, todayParis: TODAY });
+    const d = deriveRelance(pending, idx, { filters: RF({ search: 'alice' }), sortDir: 'asc', page: 1, pageSize: 25, todayParis: TODAY });
     expect(d.total).toBe(2); // filtré (pagination)
-    expect(d.totals).toEqual({ attestations: 3, participants: 2 }); // total FIGÉ (avant recherche)
+    expect(d.totals).toEqual({ attestations: 3, participants: 2 }); // total FIGÉ (avant filtres)
+    expect(d.filteredTotals).toEqual({ attestations: 2, participants: 1 }); // compteur dynamique (Alice)
     expect(d.pageItems.map((r) => r.doctypeId)).toEqual(['166', '165']); // plus vieux d'abord
+  });
+});
+
+describe('relanceDocType (types réels prouvés)', () => {
+  it('classe EPP amont / aval / PI', () => {
+    expect(relanceDocType('Attestation_honneur_EPP amont_2025')).toBe('EPP amont');
+    expect(relanceDocType('Attestation_honneur_EPP aval_2025')).toBe('EPP aval');
+    expect(relanceDocType("Attestation sur l'honneur PI_2026")).toBe('PI (formation continue)');
+    expect(relanceDocType("Attestation sur l'honneur PI_CV_PRES_EL_2025")).toBe('PI (formation continue)');
+    expect(relanceDocType('Audit clinique amont | CBCT')).toBe('EPP amont'); // libellé alternatif
+  });
+});
+
+describe('applyRelanceFilters — filtres S7 (ET)', () => {
+  const idx = indexOf([
+    session({ idAdf: 'S1', numeroSessionDpc: '26.001', intitule: 'Ménopause', dateDebut: '2026-03-01T00:00:00', dateFin: '2026-05-31T23:59:59' }),
+    session({ idAdf: 'S2', numeroSessionDpc: '26.050', intitule: 'CBCT', dateDebut: '2026-09-01T00:00:00', dateFin: '2026-11-30T23:59:59' }),
+  ]);
+  const rows = buildRelanceRows(
+    [
+      sig({ idParticipant: 'a', doctypeId: '165', idAdf: 'S1', documentName: 'Attestation_honneur_EPP amont_2025', sentDate: '2026-04-01T08:00:00.000000Z' }),
+      sig({ idParticipant: 'b', doctypeId: '166', idAdf: 'S1', documentName: 'Attestation_honneur_EPP aval_2025', sentDate: '2026-05-20T08:00:00.000000Z' }),
+      sig({ idParticipant: 'c', doctypeId: '177', idAdf: 'S2', documentName: "Attestation sur l'honneur PI_2026", sentDate: '2026-10-01T08:00:00.000000Z' }),
+    ],
+    idx,
+    '2026-06-11',
+  );
+
+  it('#1 session (DPC / intitulé)', () => {
+    expect(applyRelanceFilters(rows, RF({ sessionQuery: 'menopause' })).map((r) => r.idAdf)).toEqual(['S1', 'S1']);
+    expect(applyRelanceFilters(rows, RF({ sessionQuery: '26.050' })).map((r) => r.idParticipant)).toEqual(['c']);
+  });
+
+  it('#2 date d\'envoi — bornes incluses (jour Paris)', () => {
+    const r = applyRelanceFilters(rows, RF({ sentFrom: '2026-04-01', sentTo: '2026-05-20' }));
+    expect(r.map((x) => x.idParticipant)).toEqual(['a', 'b']); // 01/04 et 20/05 inclus ; 01/10 exclu
+  });
+
+  it('#3 période de session (chevauchement)', () => {
+    // fenêtre mars→mai : S1 (mars-mai) chevauche, S2 (sept-nov) non.
+    const r = applyRelanceFilters(rows, RF({ sessionFrom: '2026-03-01', sessionTo: '2026-05-31' }));
+    expect([...new Set(r.map((x) => x.idAdf))]).toEqual(['S1']);
+  });
+
+  it('#4 en retard > 30 j', () => {
+    // today 2026-06-11 : a (01/04 → ~71j) et b (20/05 → ~22j) ; c (01/10, futur → négatif)
+    expect(applyRelanceFilters(rows, RF({ enRetard30: true })).map((x) => x.idParticipant)).toEqual(['a']);
+  });
+
+  it('#5 type multi-select', () => {
+    expect(applyRelanceFilters(rows, RF({ docTypes: ['EPP amont', 'EPP aval'] })).map((x) => x.idParticipant)).toEqual(['a', 'b']);
+    expect(applyRelanceFilters(rows, RF({ docTypes: ['PI (formation continue)'] })).map((x) => x.idParticipant)).toEqual(['c']);
+  });
+
+  it('combinaison ET : type EPP + session S1 + en retard', () => {
+    expect(applyRelanceFilters(rows, RF({ docTypes: ['EPP amont', 'EPP aval'], sessionQuery: '26.001', enRetard30: true })).map((x) => x.idParticipant)).toEqual(['a']);
+  });
+
+  it('hasActiveRelanceFilters', () => {
+    expect(hasActiveRelanceFilters(NO_RELANCE_FILTERS)).toBe(false);
+    expect(hasActiveRelanceFilters(RF({ docTypes: ['EPP amont'] }))).toBe(true);
+    expect(hasActiveRelanceFilters(RF({ search: '  ' }))).toBe(false);
   });
 });

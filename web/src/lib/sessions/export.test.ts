@@ -32,7 +32,8 @@ function relance(over: Partial<RelanceRow> = {}): RelanceRow {
   return {
     id: 'p1_165', idAdf: '1', idParticipant: 'p1', doctypeId: '165', nom: 'Jean Dupont',
     documentName: 'Attestation EPP amont 2026', numeroSessionDpc: '26.001', sessionIntitule: 'Prévention',
-    sessionNumeroComplet: 'ADF_1', sentDate: '2026-06-01T08:00:00.000000Z', ageDays: 40,
+    sessionNumeroComplet: 'ADF_1', sessionDateDebut: '2026-01-01T00:00:00', sessionDateFin: '2026-02-20T00:00:00',
+    sentDate: '2026-06-01T08:00:00.000000Z', sentDay: '2026-06-01', ageDays: 40,
     viewerUrl: 'https://public.dendreo.com/t/media/m', ...over,
   };
 }

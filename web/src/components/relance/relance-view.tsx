@@ -4,13 +4,12 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { usePendingSignatures } from '@/hooks/use-pending-signatures';
 import { useSessionsIndex } from '@/hooks/use-sessions-index';
 import { useParisToday } from '@/hooks/use-paris-today';
-import { deriveRelance, type RelanceSortDir } from '@/lib/sessions/relance';
-import { IconSearch } from '@/components/icons';
+import { deriveRelance, NO_RELANCE_FILTERS, type RelanceFilters, type RelanceSortDir } from '@/lib/sessions/relance';
 import { PaginationBar } from '@/components/sessions/toolbar';
 import { SessionsSkeleton } from '@/components/sessions/skeleton';
-import { ExportButton } from '@/components/sessions/export-button';
 import { downloadCsv } from '@/lib/csv';
 import { relanceCsvFilename, relanceToCsv } from '@/lib/sessions/export';
+import { RelanceFiltersBar } from './relance-filters-bar';
 import { RelanceTable } from './relance-table';
 import { RelanceCard } from './relance-card';
 
@@ -19,11 +18,20 @@ export function RelanceView() {
   const indexState = useSessionsIndex();
   const todayParis = useParisToday();
 
-  const [search, setSearch] = useState('');
+  const [filters, setFilters] = useState<RelanceFilters>(NO_RELANCE_FILTERS);
   const [sortDir, setSortDir] = useState<RelanceSortDir>('asc'); // plus vieux d'abord
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(25);
   const searchRef = useRef<HTMLInputElement | null>(null);
+
+  const patchFilters = (patch: Partial<RelanceFilters>) => {
+    setFilters((f) => ({ ...f, ...patch }));
+    setPage(1);
+  };
+  const resetFilters = () => {
+    setFilters(NO_RELANCE_FILTERS);
+    setPage(1);
+  };
 
   // Raccourci "/" → focus recherche (sauf si déjà dans un champ).
   useEffect(() => {
@@ -40,8 +48,8 @@ export function RelanceView() {
   }, []);
 
   const derived = useMemo(
-    () => deriveRelance(pendingState.pending, indexState.index, { search, sortDir, page, pageSize, todayParis }),
-    [pendingState.pending, indexState.index, search, sortDir, page, pageSize, todayParis],
+    () => deriveRelance(pendingState.pending, indexState.index, { filters, sortDir, page, pageSize, todayParis }),
+    [pendingState.pending, indexState.index, filters, sortDir, page, pageSize, todayParis],
   );
 
   const loading = pendingState.loading || indexState.loading;
@@ -78,34 +86,17 @@ export function RelanceView() {
 
   return (
     <div>
-      {/* En-tête : GRAND TOTAL figé (ne suit pas la recherche). */}
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <p className="text-sm text-muted">
-          <span className="font-semibold tabular-nums text-ink">{derived.totals.attestations}</span> attestations à relancer{' '}
-          · <span className="tabular-nums text-ink">{derived.totals.participants}</span> participants
-        </p>
-
-        <div className="flex items-center gap-2.5">
-          <div className="relative w-full max-w-xs">
-            <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-faint">
-              <IconSearch />
-            </span>
-            <input
-              ref={searchRef}
-              type="search"
-              value={search}
-              onChange={(e) => {
-                setSearch(e.target.value);
-                setPage(1);
-              }}
-              placeholder="Rechercher…  ( / )"
-              aria-label="Rechercher une relance (nom, session, document)"
-              className="w-full rounded-xl border border-hairline bg-surface py-2.5 pl-9 pr-3 text-sm text-ink placeholder:text-faint transition focus:border-ink"
-            />
-          </div>
-          <ExportButton onExport={onExport} disabled={derived.total === 0} />
-        </div>
-      </div>
+      <RelanceFiltersBar
+        searchRef={searchRef}
+        filters={filters}
+        onPatch={patchFilters}
+        onReset={resetFilters}
+        todayParis={todayParis}
+        attestations={derived.filteredTotals.attestations}
+        participants={derived.filteredTotals.participants}
+        onExport={onExport}
+        exportDisabled={derived.allRows.length === 0}
+      />
 
       {derived.totals.attestations === 0 ? (
         <EmptyState title="Aucune attestation à relancer" subtitle="Tout est signé. Rien à relancer pour le moment." />
