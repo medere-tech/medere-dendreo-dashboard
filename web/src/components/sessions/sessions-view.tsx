@@ -3,13 +3,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSessions } from '@/hooks/use-sessions';
 import { useParisToday } from '@/hooks/use-paris-today';
-import { deriveSessions, type SortKey, type SortState } from '@/lib/sessions/derive';
+import { deriveSessions, NO_FILTERS, type SessionFilters, type SortKey, type SortState } from '@/lib/sessions/derive';
 import type { SessionDoc, SignatureFilter } from '@/lib/firestore/sessions';
 import { SessionsSkeleton } from './skeleton';
 import { SessionsTable } from './sessions-table';
 import { SessionCard } from './session-card';
 import { SignatureDrawer } from './signature-drawer';
-import { PaginationBar, Toolbar } from './toolbar';
+import { FiltersBar } from './filters-bar';
+import { PaginationBar } from './toolbar';
 
 const DEFAULT_SORT: SortState = { key: 'urgence', dir: 'desc' };
 const NUMERIC_KEYS: SortKey[] = ['totalParticipants', 'nonSignes'];
@@ -22,14 +23,22 @@ interface DrawerState {
 export function SessionsView() {
   const { sessions, loading, error, retry } = useSessions();
 
-  const [search, setSearch] = useState('');
-  const [etape, setEtape] = useState<string | null>(null);
-  const [hasRelances, setHasRelances] = useState(false);
+  const [filters, setFilters] = useState<SessionFilters>(NO_FILTERS);
   const [sort, setSort] = useState<SortState>(DEFAULT_SORT);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(25);
   const [drawer, setDrawer] = useState<DrawerState | null>(null);
   const searchRef = useRef<HTMLInputElement | null>(null);
+
+  // Toute mise à jour de filtre ramène à la page 1 (résultats recadrés).
+  const patchFilters = (patch: Partial<SessionFilters>) => {
+    setFilters((f) => ({ ...f, ...patch }));
+    setPage(1);
+  };
+  const resetFilters = () => {
+    setFilters(NO_FILTERS);
+    setPage(1);
+  };
 
   const openDrawer = (session: SessionDoc, filter: SignatureFilter) => setDrawer({ session, filter });
 
@@ -50,8 +59,8 @@ export function SessionsView() {
   }, []);
 
   const derived = useMemo(
-    () => deriveSessions(sessions, { filters: { search, etape, hasRelances }, sort, page, pageSize, todayParis }),
-    [sessions, search, etape, hasRelances, sort, page, pageSize, todayParis],
+    () => deriveSessions(sessions, { filters, sort, page, pageSize, todayParis }),
+    [sessions, filters, sort, page, pageSize, todayParis],
   );
 
   function onSort(key: SortKey) {
@@ -62,13 +71,6 @@ export function SessionsView() {
     );
     setPage(1);
   }
-
-  const resetPageAnd =
-    <T,>(fn: (v: T) => void) =>
-    (v: T) => {
-      fn(v);
-      setPage(1);
-    };
 
   if (loading) return <SessionsSkeleton />;
 
@@ -91,15 +93,15 @@ export function SessionsView() {
   return (
     <>
       <div>
-      <Toolbar
+      <FiltersBar
         searchRef={searchRef}
-        search={search}
-        onSearch={resetPageAnd(setSearch)}
-        etape={etape}
+        filters={filters}
+        onPatch={patchFilters}
+        onReset={resetFilters}
         etapes={derived.etapes}
-        onEtape={resetPageAnd(setEtape)}
-        hasRelances={hasRelances}
-        onHasRelances={resetPageAnd(setHasRelances)}
+        todayParis={todayParis}
+        total={derived.total}
+        relanceTotal={derived.relanceTotal}
         sortKey={sort.key}
         onResetUrgence={() => {
           setSort(DEFAULT_SORT);
@@ -132,7 +134,10 @@ export function SessionsView() {
             pageCount={derived.pageCount}
             pageSize={pageSize}
             onPage={setPage}
-            onPageSize={resetPageAnd(setPageSize)}
+            onPageSize={(n) => {
+              setPageSize(n);
+              setPage(1);
+            }}
           />
         </>
       )}

@@ -2,15 +2,24 @@ import { describe, it, expect } from 'vitest';
 import type { SessionDoc } from '@/lib/firestore/sessions';
 import {
   applyFilters,
+  datePresetRange,
   deriveSessions,
   distinctEtapes,
+  hasActiveFilters,
   isCockpitVisible,
   isEchecEtape,
+  isEnRetard,
   matchesSearch,
+  NO_FILTERS,
   normalizeText,
   paginate,
   sortSessions,
+  type SessionFilters,
 } from './derive';
+
+const TODAY = '2026-06-11';
+/** Filtres = base "aucun filtre" + surcharge (évite de réécrire tous les champs). */
+const F = (over: Partial<SessionFilters> = {}): SessionFilters => ({ ...NO_FILTERS, ...over });
 
 function make(over: Partial<SessionDoc> & { idAdf: string }): SessionDoc {
   return {
@@ -57,21 +66,21 @@ describe('robustesse : session avec counts=undefined (doc mirror incomplet)', ()
   });
 
   it('applyFilters hasRelances : session sans counts = 0 relance → exclue, sans throw', () => {
-    const rows = applyFilters([broken('a'), make({ idAdf: 'b', counts: { envoyes: 1, signes: 0, nonSignes: 1, participantsConcernes: 1, participantsARelancer: 1 } })], {
-      search: '',
-      etape: null,
-      hasRelances: true,
-    });
+    const rows = applyFilters(
+      [broken('a'), make({ idAdf: 'b', counts: { envoyes: 1, signes: 0, nonSignes: 1, participantsConcernes: 1, participantsARelancer: 1 } })],
+      F({ hasRelances: true }),
+      TODAY,
+    );
     expect(rows.map((s) => s.idAdf)).toEqual(['b']);
   });
 
   it('deriveSessions bout-en-bout : un doc incomplet ne crashe pas et n\'apparaît pas faussé', () => {
     const opts = {
-      filters: { search: '', etape: null, hasRelances: false },
+      filters: F(),
       sort: { key: 'urgence' as const, dir: 'desc' as const },
       page: 1,
       pageSize: 25,
-      todayParis: '2026-06-11',
+      todayParis: TODAY,
     };
     // dateFin passée → visible dans le cockpit ; counts absent → 0 partout, pas de throw.
     const incomplete = broken('x', { dateFin: '2026-02-01T00:00:00' });
@@ -126,10 +135,92 @@ describe('applyFilters', () => {
     make({ idAdf: '2', etape: 'Clôturé', counts: { envoyes: 3, signes: 3, nonSignes: 0, participantsConcernes: 3, participantsARelancer: 0 } }),
   ];
   it('filtre étape', () => {
-    expect(applyFilters(list, { search: '', etape: 'Clôturé', hasRelances: false }).map((s) => s.idAdf)).toEqual(['2']);
+    expect(applyFilters(list, F({ etape: 'Clôturé' }), TODAY).map((s) => s.idAdf)).toEqual(['2']);
   });
   it('filtre "a des relances"', () => {
-    expect(applyFilters(list, { search: '', etape: null, hasRelances: true }).map((s) => s.idAdf)).toEqual(['1']);
+    expect(applyFilters(list, F({ hasRelances: true }), TODAY).map((s) => s.idAdf)).toEqual(['1']);
+  });
+});
+
+describe('applyFilters — filtres Ops S5.3', () => {
+  it('plage dateFin : bornes INCLUSES (du/au)', () => {
+    const list = [
+      make({ idAdf: 'jun01', dateFin: '2026-06-01T00:00:00' }),
+      make({ idAdf: 'jun15', dateFin: '2026-06-15T00:00:00' }),
+      make({ idAdf: 'jun30', dateFin: '2026-06-30T23:59:59' }),
+      make({ idAdf: 'jul01', dateFin: '2026-07-01T00:00:00' }),
+    ];
+    const r = applyFilters(list, F({ dateFinFrom: '2026-06-01', dateFinTo: '2026-06-30' }), TODAY);
+    expect(r.map((s) => s.idAdf)).toEqual(['jun01', 'jun15', 'jun30']); // 01 et 30 inclus, 07-01 exclu
+  });
+
+  it('plage dateFin : borne "du" seule (>=)', () => {
+    const list = [make({ idAdf: 'a', dateFin: '2026-05-31T00:00:00' }), make({ idAdf: 'b', dateFin: '2026-06-01T00:00:00' })];
+    expect(applyFilters(list, F({ dateFinFrom: '2026-06-01' }), TODAY).map((s) => s.idAdf)).toEqual(['b']);
+  });
+
+  it('format multi : passe si ∈ sélection ; pré-backfill (format "") exclu si sélection posée', () => {
+    const list = [
+      make({ idAdf: 'p', format: 'Présentiel' }),
+      make({ idAdf: 'cv', format: 'Classe virtuelle' }),
+      make({ idAdf: 'm', format: 'Mixte' }),
+      make({ idAdf: 'vide', format: '' }),
+    ];
+    expect(applyFilters(list, F({ formats: ['Présentiel', 'Classe virtuelle'] }), TODAY).map((s) => s.idAdf)).toEqual(['p', 'cv']);
+    // aucune sélection = tous (y compris format vide pré-backfill)
+    expect(applyFilters(list, F(), TODAY).map((s) => s.idAdf)).toEqual(['p', 'cv', 'm', 'vide']);
+  });
+
+  it('en retard > 30 j : compare le plus vieux pending au jour Paris', () => {
+    const list = [
+      make({ idAdf: 'vieux', oldestPendingSentDate: '2026-05-01T08:00:00.000000Z' }), // ~41 j avant le 11/06
+      make({ idAdf: 'recent', oldestPendingSentDate: '2026-06-05T08:00:00.000000Z' }), // ~6 j
+      make({ idAdf: 'sans', oldestPendingSentDate: null }),
+    ];
+    expect(applyFilters(list, F({ enRetard30: true }), TODAY).map((s) => s.idAdf)).toEqual(['vieux']);
+  });
+
+  it('à cheval + EPP connecté (amont OU aval)', () => {
+    const list = [
+      make({ idAdf: 'ch', aCheval: true }),
+      make({ idAdf: 'nonch', aCheval: false }),
+      make({ idAdf: 'epp', eppAmontConnecte: false, eppAvalConnecte: true }),
+      make({ idAdf: 'noepp', eppAmontConnecte: false, eppAvalConnecte: false }),
+    ];
+    expect(applyFilters(list, F({ aCheval: true }), TODAY).map((s) => s.idAdf)).toEqual(['ch']);
+    expect(applyFilters(list, F({ eppConnecte: true }), TODAY).map((s) => s.idAdf)).toEqual(['epp']);
+  });
+
+  it('combinaison ET : format + à cheval + a des relances', () => {
+    const list = [
+      make({ idAdf: 'ok', format: 'Mixte', aCheval: true, counts: { envoyes: 2, signes: 0, nonSignes: 2, participantsConcernes: 2, participantsARelancer: 2 } }),
+      make({ idAdf: 'ko_format', format: 'Présentiel', aCheval: true, counts: { envoyes: 2, signes: 0, nonSignes: 2, participantsConcernes: 2, participantsARelancer: 2 } }),
+      make({ idAdf: 'ko_norelance', format: 'Mixte', aCheval: true, counts: { envoyes: 2, signes: 2, nonSignes: 0, participantsConcernes: 2, participantsARelancer: 0 } }),
+    ];
+    expect(applyFilters(list, F({ formats: ['Mixte'], aCheval: true, hasRelances: true }), TODAY).map((s) => s.idAdf)).toEqual(['ok']);
+  });
+});
+
+describe('isEnRetard / datePresetRange / hasActiveFilters', () => {
+  it('isEnRetard : seuil strict > 30 j', () => {
+    expect(isEnRetard(make({ idAdf: '1', oldestPendingSentDate: '2026-05-01T08:00:00.000000Z' }), TODAY)).toBe(true);
+    expect(isEnRetard(make({ idAdf: '2', oldestPendingSentDate: '2026-06-05T08:00:00.000000Z' }), TODAY)).toBe(false);
+    expect(isEnRetard(make({ idAdf: '3', oldestPendingSentDate: null }), TODAY)).toBe(false);
+  });
+
+  it('datePresetRange : ce mois / mois dernier (Paris, dernier jour correct)', () => {
+    expect(datePresetRange('thisMonth', '2026-06-11')).toEqual({ from: '2026-06-01', to: '2026-06-30' });
+    expect(datePresetRange('lastMonth', '2026-06-11')).toEqual({ from: '2026-05-01', to: '2026-05-31' });
+    expect(datePresetRange('lastMonth', '2026-01-15')).toEqual({ from: '2025-12-01', to: '2025-12-31' }); // bascule d'année
+    expect(datePresetRange('thisMonth', '2024-02-10')).toEqual({ from: '2024-02-01', to: '2024-02-29' }); // février bissextile
+    expect(datePresetRange('year2025', TODAY)).toEqual({ from: '2025-01-01', to: '2025-12-31' });
+  });
+
+  it('hasActiveFilters', () => {
+    expect(hasActiveFilters(NO_FILTERS)).toBe(false);
+    expect(hasActiveFilters(F({ aCheval: true }))).toBe(true);
+    expect(hasActiveFilters(F({ formats: ['Mixte'] }))).toBe(true);
+    expect(hasActiveFilters(F({ search: '  ' }))).toBe(false); // espaces seuls = inactif
   });
 });
 
@@ -237,7 +328,7 @@ describe('deriveSessions — intégration', () => {
       make({ idAdf: '3', etape: 'Clôturé', counts: { envoyes: 4, signes: 4, nonSignes: 0, participantsConcernes: 4, participantsARelancer: 0 } }),
     ];
     const d = deriveSessions(list, {
-      filters: { search: '', etape: 'Réalisation', hasRelances: true },
+      filters: F({ etape: 'Réalisation', hasRelances: true }),
       sort: { key: 'urgence', dir: 'desc' },
       page: 1,
       pageSize: 25,
@@ -257,7 +348,7 @@ describe('deriveSessions — intégration', () => {
       make({ idAdf: 'echec', etape: 'Echec', dateFin: '2026-01-01T00:00:00' }),
     ];
     const d = deriveSessions(list, {
-      filters: { search: '', etape: null, hasRelances: false },
+      filters: F(),
       sort: { key: 'urgence', dir: 'desc' },
       page: 1,
       pageSize: 25,

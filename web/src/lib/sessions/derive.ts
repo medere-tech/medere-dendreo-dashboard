@@ -1,4 +1,5 @@
 import { EMPTY_COUNTS, type Counts, type SessionDoc } from '@/lib/firestore/sessions';
+import { daysBetween, parisDayOfInstant } from '@/lib/time';
 
 /**
  * Accès défensif aux compteurs : même si un doc mirror arrive sans `counts`
@@ -33,10 +34,79 @@ export interface SortState {
   dir: SortDir;
 }
 
+/** Nb de jours au-delà duquel une session est « en retard » (oldestPendingSentDate). */
+export const EN_RETARD_SEUIL_JOURS = 30;
+
 export interface SessionFilters {
   search: string;
   etape: string | null;
   hasRelances: boolean;
+  dateFinFrom: string | null; // "YYYY-MM-DD" inclusif (sur dateFin)
+  dateFinTo: string | null; // "YYYY-MM-DD" inclusif (sur dateFin)
+  formats: string[]; // multi-sélection ; [] = tous les formats
+  enRetard30: boolean; // oldestPendingSentDate plus vieux que 30 j (jour Paris)
+  aCheval: boolean; // session à cheval sur 2 années
+  eppConnecte: boolean; // EPP amont OU aval connecté
+}
+
+/** Aucun filtre actif (état par défaut + base des mises à jour partielles). */
+export const NO_FILTERS: SessionFilters = {
+  search: '',
+  etape: null,
+  hasRelances: false,
+  dateFinFrom: null,
+  dateFinTo: null,
+  formats: [],
+  enRetard30: false,
+  aCheval: false,
+  eppConnecte: false,
+};
+
+/** ≥1 filtre actif ? (pour afficher « Réinitialiser » + les puces). */
+export function hasActiveFilters(f: SessionFilters): boolean {
+  return (
+    f.search.trim() !== '' ||
+    f.etape !== null ||
+    f.hasRelances ||
+    f.dateFinFrom !== null ||
+    f.dateFinTo !== null ||
+    f.formats.length > 0 ||
+    f.enRetard30 ||
+    f.aCheval ||
+    f.eppConnecte
+  );
+}
+
+/** Raccourcis de plage sur la date de fin, calculés depuis today Paris (déterministe). */
+export type DatePreset = 'thisMonth' | 'lastMonth' | 'year2025' | 'year2026';
+
+export function datePresetRange(preset: DatePreset, todayParis: string): { from: string; to: string } {
+  const [y = 0, m = 1] = todayParis.split('-').map(Number);
+  const pad = (n: number): string => String(n).padStart(2, '0');
+  // Date.UTC en simple ancre arithmétique (aucune conversion de fuseau) : dernier jour du mois.
+  const lastDay = (yy: number, mm: number): number => new Date(Date.UTC(yy, mm, 0)).getUTCDate();
+  switch (preset) {
+    case 'thisMonth':
+      return { from: `${y}-${pad(m)}-01`, to: `${y}-${pad(m)}-${pad(lastDay(y, m))}` };
+    case 'lastMonth': {
+      const ly = m === 1 ? y - 1 : y;
+      const lm = m === 1 ? 12 : m - 1;
+      return { from: `${ly}-${pad(lm)}-01`, to: `${ly}-${pad(lm)}-${pad(lastDay(ly, lm))}` };
+    }
+    case 'year2025':
+      return { from: '2025-01-01', to: '2025-12-31' };
+    case 'year2026':
+      return { from: '2026-01-01', to: '2026-12-31' };
+  }
+}
+
+/** « En retard » = plus vieux pending de la session > seuil jours (jour Paris). */
+export function isEnRetard(s: SessionDoc, todayParis: string, seuilJours = EN_RETARD_SEUIL_JOURS): boolean {
+  const oldest = s.oldestPendingSentDate;
+  if (!oldest) return false; // aucun pending → jamais « en retard »
+  const day = parisDayOfInstant(oldest); // instant "…Z" → jour Paris
+  if (!day) return false;
+  return daysBetween(day, todayParis) > seuilJours;
 }
 
 export interface DeriveOptions {
@@ -50,6 +120,7 @@ export interface DeriveOptions {
 export interface DerivedSessions {
   pageItems: SessionDoc[];
   total: number; // après filtres utilisateur
+  relanceTotal: number; // Σ nonSignes sur les sessions filtrées (compteur "Y à relancer")
   cockpitTotal: number; // sessions "terminées" affichables (avant filtres utilisateur)
   from: number; // 1-indexé (0 si vide)
   to: number;
@@ -88,10 +159,28 @@ export function matchesSearch(s: SessionDoc, rawQuery: string): boolean {
   return q.split(/\s+/).every((token) => haystack.includes(token));
 }
 
-export function applyFilters(sessions: readonly SessionDoc[], filters: SessionFilters): SessionDoc[] {
+/**
+ * Filtres cockpit, 100% en mémoire, combinés en ET. `todayParis` sert au filtre
+ * « en retard > 30 j » (injecté → déterministe). Toutes les comparaisons de dates
+ * de session se font sur `dateFin.slice(0,10)` (Paris naïf, aucune conversion UTC).
+ */
+export function applyFilters(
+  sessions: readonly SessionDoc[],
+  filters: SessionFilters,
+  todayParis: string,
+): SessionDoc[] {
   return sessions.filter((s) => {
     if (filters.etape && s.etape !== filters.etape) return false;
     if (filters.hasRelances && countsOf(s).nonSignes <= 0) return false;
+    // Plage sur la date de fin (bornes INCLUSES). dateFin '' (pré-backfill) exclue si borne posée.
+    const finDay = s.dateFin.slice(0, 10);
+    if (filters.dateFinFrom && finDay < filters.dateFinFrom) return false;
+    if (filters.dateFinTo && finDay > filters.dateFinTo) return false;
+    // Format multi : passe si ∈ sélection. format '' (pré-backfill) → seulement si aucune sélection.
+    if (filters.formats.length > 0 && !filters.formats.includes(s.format)) return false;
+    if (filters.enRetard30 && !isEnRetard(s, todayParis)) return false;
+    if (filters.aCheval && !s.aCheval) return false;
+    if (filters.eppConnecte && !(s.eppAmontConnecte || s.eppAvalConnecte)) return false;
     if (!matchesSearch(s, filters.search)) return false;
     return true;
   });
@@ -190,8 +279,9 @@ export function paginate<T>(items: readonly T[], page: number, pageSize: number)
 
 export function deriveSessions(sessions: readonly SessionDoc[], opts: DeriveOptions): DerivedSessions {
   const visible = sessions.filter((s) => isCockpitVisible(s, opts.todayParis));
-  const filtered = applyFilters(visible, opts.filters);
+  const filtered = applyFilters(visible, opts.filters, opts.todayParis);
   const sorted = sortSessions(filtered, opts.sort);
   const view = paginate(sorted, opts.page, opts.pageSize);
-  return { ...view, cockpitTotal: visible.length, etapes: distinctEtapes(visible) };
+  const relanceTotal = filtered.reduce((n, s) => n + countsOf(s).nonSignes, 0);
+  return { ...view, relanceTotal, cockpitTotal: visible.length, etapes: distinctEtapes(visible) };
 }
