@@ -40,6 +40,8 @@ const session = (idAdf: string): SessionUpsertInput => ({
   aCheval: false,
   eppAmontConnecte: false,
   eppAvalConnecte: false,
+  eligibleDpc: true,
+  aEpp: false,
 });
 
 const sig = (idAdf: string, idParticipant: string, over: Partial<SignatureUpsertInput>): SignatureUpsertInput => ({

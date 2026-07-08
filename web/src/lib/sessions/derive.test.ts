@@ -39,6 +39,8 @@ function make(over: Partial<SessionDoc> & { idAdf: string }): SessionDoc {
     aCheval: over.aCheval ?? false,
     eppAmontConnecte: over.eppAmontConnecte ?? false,
     eppAvalConnecte: over.eppAvalConnecte ?? false,
+    eligibleDpc: over.eligibleDpc ?? true,
+    aEpp: over.aEpp ?? false,
     counts: over.counts ?? { envoyes: 0, signes: 0, nonSignes: 0, participantsConcernes: 0, participantsARelancer: 0 },
     oldestPendingSentDate: over.oldestPendingSentDate ?? null,
     lastSyncedAt: over.lastSyncedAt ?? '2026-06-01T00:00:00',

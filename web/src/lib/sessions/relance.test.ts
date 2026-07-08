@@ -52,6 +52,8 @@ function session(over: Partial<SessionDoc> & { idAdf: string }): SessionDoc {
     aCheval: false,
     eppAmontConnecte: false,
     eppAvalConnecte: false,
+    eligibleDpc: true,
+    aEpp: false,
     counts: { envoyes: 0, signes: 0, nonSignes: 0, participantsConcernes: 0, participantsARelancer: 0 },
     oldestPendingSentDate: null,
     lastSyncedAt: '2026-06-01T00:00:00',
