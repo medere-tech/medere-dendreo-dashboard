@@ -17,7 +17,8 @@
     "incremental": true,
     "baseUrl": ".",
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": ["./src/*"],
+      "@shared/*": ["../src/*"]
     },
     "plugins": [{ "name": "next" }]
   },
