@@ -5,6 +5,7 @@ import { suiviSignaturesUrl } from '@/lib/dendreo';
 import {
   RELANCE_CSV_HEADERS,
   SESSIONS_CSV_HEADERS,
+  attestationManquante,
   ddmmyy,
   ddmmyyFromInstant,
   eppCoNc,
@@ -16,6 +17,14 @@ import {
   sessionToCsvRow,
   signaturesSummary,
 } from './export';
+
+const counts = (envoyes: number, signes: number) => ({
+  envoyes,
+  signes,
+  nonSignes: envoyes - signes,
+  participantsConcernes: envoyes,
+  participantsARelancer: envoyes - signes,
+});
 
 function session(over: Partial<SessionDoc> = {}): SessionDoc {
   return {
@@ -61,6 +70,11 @@ describe('helpers de mapping', () => {
     expect(signaturesSummary({ envoyes: 3, signes: 3, nonSignes: 0, participantsConcernes: 3, participantsARelancer: 0 })).toBe('Tous ont signé');
     expect(signaturesSummary({ envoyes: 3, signes: 1, nonSignes: 2, participantsConcernes: 3, participantsARelancer: 2 })).toBe('2 à relancer');
   });
+  it('attestationManquante : 0 envoyé → "—" / tout signé → "Signature complète" / 2 sur 30 → "2/30"', () => {
+    expect(attestationManquante(counts(0, 0))).toBe('—');
+    expect(attestationManquante(counts(30, 30))).toBe('Signature complète');
+    expect(attestationManquante(counts(30, 28))).toBe('2/30');
+  });
 });
 
 describe('COCKPIT — colonnes & mapping', () => {
@@ -85,8 +99,9 @@ describe('COCKPIT — colonnes & mapping', () => {
     expect(row[7]).toBe('CO/NC'); // EPP CO/NC
     expect(row[8]).toBe('✅'); // Cheval?
     expect(row[12]).toBe('2 à relancer'); // Signatures
-    // colonnes Ops vides
-    expect([row[9], row[10], row[11], row[13], row[14], row[15], row[16], row[17]]).toEqual(['', '', '', '', '', '', '', '']);
+    expect(row[15]).toBe('2/3'); // Attestation manquante (nonSignes/envoyes)
+    // colonnes Ops encore vides (15 = Attestation manquante désormais remplie)
+    expect([row[9], row[10], row[11], row[13], row[14], row[16], row[17]]).toEqual(['', '', '', '', '', '', '']);
     // Lien stockage (dernière colonne) = suiviSignaturesUrl, jamais reconstruit à la main
     expect(row[18]).toBe(suiviSignaturesUrl('2656'));
     expect(row[18]).toBe('https://pro.dendreo.com/nes_formation/formations/2656/suivi-signatures');

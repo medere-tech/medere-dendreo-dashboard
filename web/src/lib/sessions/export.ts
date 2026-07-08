@@ -39,6 +39,14 @@ export function signaturesSummary(c: Counts): string {
   return `${c.nonSignes} à relancer`;
 }
 
+/** Colonne "Attestation manquante" : "—" si 0 envoyé, "Signature complète" si tout
+ *  signé, sinon "{nonSignes}/{envoyes}" (non signées / envoyées). */
+export function attestationManquante(c: Counts): string {
+  if (c.envoyes === 0) return '—';
+  if (c.nonSignes === 0) return 'Signature complète';
+  return `${c.nonSignes}/${c.envoyes}`;
+}
+
 // --- COCKPIT (ordre EXACT du Sheet Ops) -------------------------------------
 export const SESSIONS_CSV_HEADERS = [
   'DPC', 'Intitulé', 'N° CP', 'Session', 'Organisation', 'Début', 'Fin', 'EPP CO/NC', 'Cheval?',
@@ -64,7 +72,7 @@ export function sessionToCsvRow(s: SessionDoc): string[] {
     signaturesSummary(c),
     '', // Commentaire     (Ops)
     '', // Relance         (Ops)
-    '', // Attestation manquante (Ops)
+    attestationManquante(c), // Attestation manquante (S6.3)
     '', // Dendreo         (Ops)
     '', // Dossier         (Ops)
     s.idAdf ? suiviSignaturesUrl(s.idAdf) : '', // Lien stockage — constante partagée, jamais reconstruit
