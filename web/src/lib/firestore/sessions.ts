@@ -36,6 +36,8 @@ export interface SessionDoc {
   aCheval: boolean; // année(dateDebut) != année(dateFin)
   eppAmontConnecte: boolean; // module EPP amont (cat 22) avec heures connectées > 0
   eppAvalConnecte: boolean; // module EPP aval (cat 21) avec heures connectées > 0
+  eligibleDpc: boolean; // eligible_dpc="1" du module cœur — S6.2
+  aEpp: boolean; // ∃ module EPP (cat 22 ou 21)
   counts: Counts;
   oldestPendingSentDate: string | null;
   lastSyncedAt: string;
@@ -95,6 +97,8 @@ export function toSessionDoc(raw: DocumentData): SessionDoc {
     aCheval: asBool(raw.aCheval),
     eppAmontConnecte: asBool(raw.eppAmontConnecte),
     eppAvalConnecte: asBool(raw.eppAvalConnecte),
+    eligibleDpc: asBool(raw.eligibleDpc),
+    aEpp: asBool(raw.aEpp),
     counts: normalizeCounts(raw.counts),
     oldestPendingSentDate: asNullableStr(raw.oldestPendingSentDate),
     lastSyncedAt: asStr(raw.lastSyncedAt),

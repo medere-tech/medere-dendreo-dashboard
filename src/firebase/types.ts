@@ -30,6 +30,8 @@ export interface SessionDoc {
   aCheval: boolean; // année(dateDebut) != année(dateFin)
   eppAmontConnecte: boolean; // module id_categorie_module=22 avec heures connectées > 0
   eppAvalConnecte: boolean; // module id_categorie_module=21 avec heures connectées > 0
+  eligibleDpc: boolean; // eligible_dpc="1" du module cœur (S6.2)
+  aEpp: boolean; // ∃ module EPP (cat 22 ou 21) dans la session
   counts: Counts;
   oldestPendingSentDate: string | null;
   lastSyncedAt: string;

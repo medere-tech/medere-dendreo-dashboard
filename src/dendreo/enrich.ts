@@ -6,6 +6,7 @@ export interface SessionModuleView {
   categorie: string; // id_categorie_module (string). EPP amont=22, aval=21.
   heuresConnectees: number; // c_nombre_dheures_connectees (>= 0)
   numProgrammeDpc: string; // num_programme_dpc (11 chiffres) ; '' si absent
+  eligibleDpc: string; // eligible_dpc brut ("1" = éligible, "0" = non)
 }
 
 export const EPP_AMONT_CAT = '22';
@@ -43,6 +44,21 @@ export function parseHeures(v: unknown): number {
 export function eppConnecte(modules: readonly SessionModuleView[], sens: 'amont' | 'aval'): boolean {
   const cat = sens === 'amont' ? EPP_AMONT_CAT : EPP_AVAL_CAT;
   return modules.some((m) => m.categorie === cat && m.heuresConnectees > 0);
+}
+
+/** Présence d'AU MOINS UN module EPP (amont OU aval) dans la session. */
+export function hasEpp(modules: readonly SessionModuleView[]): boolean {
+  return modules.some((m) => m.categorie === EPP_AMONT_CAT || m.categorie === EPP_AVAL_CAT);
+}
+
+/**
+ * Éligible DPC (S6.2) : `eligible_dpc === "1"` du module CŒUR (catégorie ∉ {21,22},
+ * même module que le n° compte produit). À défaut de cœur : 1er module ; sinon false.
+ */
+export function deriveEligibleDpc(modules: readonly SessionModuleView[]): boolean {
+  const core = modules.find((m) => m.categorie !== EPP_AMONT_CAT && m.categorie !== EPP_AVAL_CAT);
+  const ref = core ?? modules[0];
+  return String(ref?.eligibleDpc ?? '').trim() === '1';
 }
 
 /**

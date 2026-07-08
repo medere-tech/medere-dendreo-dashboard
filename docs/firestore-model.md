@@ -22,6 +22,8 @@ Une session de formation + son agrégat de signatures (pour la vue transverse et
   aCheval: boolean,                    // S5.1b — année(dateDebut) != année(dateFin)
   eppAmontConnecte: boolean,           // S5.1b — module id_categorie_module=22 AVEC c_nombre_dheures_connectees > 0
   eppAvalConnecte: boolean,            // S5.1b — module id_categorie_module=21 AVEC c_nombre_dheures_connectees > 0
+  eligibleDpc: boolean,                // S6.2 — eligible_dpc="1" du module CŒUR (cat ∉ {21,22})
+  aEpp: boolean,                       // S6.2 — ∃ module EPP (cat 22 ou 21) dans la session
   counts: {                            // cf. signature-rule.md §4
     envoyes: number,
     signes: number,
@@ -79,7 +81,7 @@ Déclarés dans `firestore.indexes.json` :
 - **Clés déterministes** : `sessions/{idAdf}`, `signatures/{idAdf}_{idParticipant}_{doctypeId}`.
 - Rejouer le backfill, recevoir un webhook, ou relancer la sync → **met à jour le même doc** sans doublon. Last-write-wins.
 - `counts` et `oldestPendingSentDate` de la session sont **recalculés** à chaque sync de la session (dérivés des `signatures` de cette session).
-- **Enrichissement S5.1b** (`format`, `aCheval`, `eppAmontConnecte`, `eppAvalConnecte`, `numeroCompteProduit` corrigé) : `format`/`aCheval` sont dérivés de l'ADF seul ; les 2 booléens EPP + la correction `numeroCompteProduit` viennent des **modules** via **1 lecture / session** — `lams.php?id_action_de_formation={id}&include=module` (porte `id_categorie_module`, `c_nombre_dheures_connectees`, `num_programme_dpc`). Logique pure et testée : `src/dendreo/enrich.ts`. Une lecture module KO n'empêche pas l'écriture de la session (valeurs ADF-only conservées).
+- **Enrichissement S5.1b/S6.2** (`format`, `aCheval`, `eppAmontConnecte`, `eppAvalConnecte`, `eligibleDpc`, `aEpp`, `numeroCompteProduit` corrigé) : `format`/`aCheval` sont dérivés de l'ADF seul ; les booléens EPP, `eligibleDpc`, `aEpp` et la correction `numeroCompteProduit` viennent des **modules** via **1 lecture / session** — `lams.php?id_action_de_formation={id}&include=module` (porte `id_categorie_module`, `c_nombre_dheures_connectees`, `num_programme_dpc`, `eligible_dpc`). Logique pure et testée : `src/dendreo/enrich.ts`. Une lecture module KO n'empêche pas l'écriture de la session (valeurs ADF-only conservées).
 - Suppression de lignes obsolètes (un doc qui disparaîtrait côté Dendreo) : **backlog** (rare ; on traite plus tard, pas en S2).
 
 ## 6. Format des dates (anti-bug fuseau) — DEUX cas distincts

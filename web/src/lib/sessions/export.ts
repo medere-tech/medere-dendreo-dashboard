@@ -23,12 +23,12 @@ export function ddmmyyFromInstant(instant: string | null | undefined): string {
 }
 
 /**
- * EPP CO/NC (convention S6, validée) : `{amont}/{aval}` avec CO = connecté
- * (heures connectées > 0), NC = non connecté. Ex. "CO/CO", "NC/CO", "NC/NC".
- * ⚠️ Le miroir ne stocke pas la PRÉSENCE d'EPP → pas de "—" pour "pas d'EPP"
- * (une session sans EPP sort "NC/NC"). Un flag eppPresent serait requis (backlog).
+ * EPP CO/NC (S6.2) : `—` si la session n'a AUCUN module EPP (`aEpp=false`),
+ * sinon `{amont}/{aval}` avec CO = connecté (heures connectées > 0), NC = non connecté.
+ * Ex. "—", "CO/CO", "NC/CO", "NC/NC".
  */
-export function eppCoNc(s: Pick<SessionDoc, 'eppAmontConnecte' | 'eppAvalConnecte'>): string {
+export function eppCoNc(s: Pick<SessionDoc, 'eppAmontConnecte' | 'eppAvalConnecte' | 'aEpp'>): string {
+  if (!s.aEpp) return '—';
   return `${s.eppAmontConnecte ? 'CO' : 'NC'}/${s.eppAvalConnecte ? 'CO' : 'NC'}`;
 }
 
@@ -49,7 +49,7 @@ export const SESSIONS_CSV_HEADERS = [
 export function sessionToCsvRow(s: SessionDoc): string[] {
   const c = s.counts ?? EMPTY_COUNTS;
   return [
-    '', // DPC — "Éligible DPC" pas encore au miroir (ajouté plus tard)
+    s.eligibleDpc ? 'TRUE' : 'FALSE', // DPC = éligibilité DPC (S6.2)
     s.intitule ?? '',
     s.numeroCompteProduit ?? '',
     s.numeroSessionDpc ?? '',

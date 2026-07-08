@@ -63,6 +63,8 @@ function validateSessionInput(s: SessionUpsertInput): void {
   assertBoolean(s.aCheval, 'aCheval');
   assertBoolean(s.eppAmontConnecte, 'eppAmontConnecte');
   assertBoolean(s.eppAvalConnecte, 'eppAvalConnecte');
+  assertBoolean(s.eligibleDpc, 'eligibleDpc');
+  assertBoolean(s.aEpp, 'aEpp');
   assertNumber(s.totalParticipants, 'totalParticipants');
 }
 

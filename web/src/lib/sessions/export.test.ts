@@ -22,7 +22,7 @@ function session(over: Partial<SessionDoc> = {}): SessionDoc {
     idAdf: '1', numeroComplet: 'ADF_1', numeroSessionDpc: '26.001', numeroCompteProduit: '92622525478',
     intitule: 'Prévention', dateDebut: '2026-01-09T00:00:00', dateFin: '2026-02-20T23:59:59',
     idEtapeProcess: '6', etape: 'Réalisation', idCentre: '1', type: 'inter', totalParticipants: 4,
-    format: 'Mixte', aCheval: false, eppAmontConnecte: false, eppAvalConnecte: false,
+    format: 'Mixte', aCheval: false, eppAmontConnecte: false, eppAvalConnecte: false, eligibleDpc: true, aEpp: true,
     counts: { envoyes: 3, signes: 1, nonSignes: 2, participantsConcernes: 3, participantsARelancer: 2 },
     oldestPendingSentDate: null, lastSyncedAt: '', source: 'dendreo',
     ...over,
@@ -48,11 +48,13 @@ describe('helpers de mapping', () => {
     expect(ddmmyyFromInstant('2026-06-01T08:00:00.000000Z')).toBe('01/06/26');
     expect(ddmmyyFromInstant(null)).toBe('');
   });
-  it('eppCoNc : convention {amont}/{aval}', () => {
-    expect(eppCoNc({ eppAmontConnecte: true, eppAvalConnecte: true })).toBe('CO/CO');
-    expect(eppCoNc({ eppAmontConnecte: false, eppAvalConnecte: true })).toBe('NC/CO');
-    expect(eppCoNc({ eppAmontConnecte: true, eppAvalConnecte: false })).toBe('CO/NC');
-    expect(eppCoNc({ eppAmontConnecte: false, eppAvalConnecte: false })).toBe('NC/NC');
+  it('eppCoNc : "—" si pas d\'EPP, sinon {amont}/{aval}', () => {
+    expect(eppCoNc({ aEpp: false, eppAmontConnecte: false, eppAvalConnecte: false })).toBe('—');
+    expect(eppCoNc({ aEpp: false, eppAmontConnecte: true, eppAvalConnecte: true })).toBe('—'); // aEpp prime
+    expect(eppCoNc({ aEpp: true, eppAmontConnecte: true, eppAvalConnecte: true })).toBe('CO/CO');
+    expect(eppCoNc({ aEpp: true, eppAmontConnecte: false, eppAvalConnecte: true })).toBe('NC/CO');
+    expect(eppCoNc({ aEpp: true, eppAmontConnecte: true, eppAvalConnecte: false })).toBe('CO/NC');
+    expect(eppCoNc({ aEpp: true, eppAmontConnecte: false, eppAvalConnecte: false })).toBe('NC/NC');
   });
   it('signaturesSummary : 0 envoyé / tous signés / à relancer', () => {
     expect(signaturesSummary({ envoyes: 0, signes: 0, nonSignes: 0, participantsConcernes: 0, participantsARelancer: 0 })).toBe('—');
@@ -70,10 +72,10 @@ describe('COCKPIT — colonnes & mapping', () => {
     ]);
   });
 
-  it('sessionToCsvRow : DPC vide, dates JJ/MM/AA, EPP, cheval, signatures, colonnes Ops vides, lien stockage', () => {
+  it('sessionToCsvRow : DPC TRUE/FALSE, dates JJ/MM/AA, EPP, cheval, signatures, colonnes Ops vides, lien stockage', () => {
     const row = sessionToCsvRow(session({ idAdf: '2656', aCheval: true, eppAmontConnecte: true }));
     expect(row).toHaveLength(SESSIONS_CSV_HEADERS.length); // 19
-    expect(row[0]).toBe(''); // DPC (à venir)
+    expect(row[0]).toBe('TRUE'); // DPC = eligibleDpc (true par défaut de la factory)
     expect(row[1]).toBe('Prévention'); // Intitulé
     expect(row[2]).toBe('92622525478'); // N° CP
     expect(row[3]).toBe('26.001'); // Session
@@ -106,6 +108,12 @@ describe('COCKPIT — colonnes & mapping', () => {
     expect(row[2]).toBe('');
     expect(row[3]).toBe('');
     expect(row[4]).toBe('');
+  });
+
+  it('DPC=FALSE si non éligible ; EPP="—" si pas d\'EPP', () => {
+    const row = sessionToCsvRow(session({ eligibleDpc: false, aEpp: false, eppAmontConnecte: true }));
+    expect(row[0]).toBe('FALSE'); // DPC
+    expect(row[7]).toBe('—'); // EPP CO/NC — pas d'EPP
   });
 
   it('sessionsToCsv : exporte EXACTEMENT les lignes fournies (entête + N lignes)', () => {

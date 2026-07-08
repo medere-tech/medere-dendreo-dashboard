@@ -17,7 +17,7 @@
 import { loadDendreoEnv, DENDREO } from '../src/config';
 import { DendreoClient } from '../src/dendreo/client';
 import { getSessionSignatureStatus } from '../src/dendreo/signatures';
-import { deriveNumeroCompteProduit, eppConnecte, formatLabel, isACheval, parseHeures } from '../src/dendreo/enrich';
+import { deriveEligibleDpc, deriveNumeroCompteProduit, eppConnecte, formatLabel, hasEpp, isACheval, parseHeures } from '../src/dendreo/enrich';
 import { getDb } from '../src/firebase/admin';
 import { recalcSessionCounts, upsertSession, upsertSignature } from '../src/firebase/firestore';
 
@@ -126,6 +126,8 @@ function mapSession(s) {
     aCheval: isACheval(dateDebut, dateFin),
     eppAmontConnecte: false,
     eppAvalConnecte: false,
+    eligibleDpc: false, // provisoire → fixé par enrichWithModules
+    aEpp: false, // provisoire → fixé par enrichWithModules
   };
 }
 
@@ -142,6 +144,7 @@ async function fetchSessionModules(idAdf) {
       categorie: String(m.id_categorie_module ?? ''),
       heuresConnectees: parseHeures(m.c_nombre_dheures_connectees),
       numProgrammeDpc: String(m.num_programme_dpc ?? '').trim(),
+      eligibleDpc: String(m.eligible_dpc ?? '').trim(),
     });
   }
   return out;
@@ -157,6 +160,8 @@ async function enrichWithModules(session) {
     const mods = await fetchSessionModules(session.idAdf);
     session.eppAmontConnecte = eppConnecte(mods, 'amont');
     session.eppAvalConnecte = eppConnecte(mods, 'aval');
+    session.aEpp = hasEpp(mods);
+    session.eligibleDpc = deriveEligibleDpc(mods);
     // deriveNumeroCompteProduit garde l'ADF s'il est renseigné (session.numeroCompteProduit
     // non-null), sinon prend le num du module cœur.
     session.numeroCompteProduit = deriveNumeroCompteProduit(session.numeroCompteProduit, mods);

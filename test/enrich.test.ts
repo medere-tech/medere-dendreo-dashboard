@@ -3,18 +3,21 @@
 
 import { describe, it, expect } from 'vitest';
 import {
+  deriveEligibleDpc,
   deriveNumeroCompteProduit,
   eppConnecte,
   formatLabel,
+  hasEpp,
   isACheval,
   parseHeures,
   type SessionModuleView,
 } from '../src/dendreo/enrich';
 
-const mod = (categorie: string, heuresConnectees: number, numProgrammeDpc = ''): SessionModuleView => ({
+const mod = (categorie: string, heuresConnectees: number, numProgrammeDpc = '', eligibleDpc = '1'): SessionModuleView => ({
   categorie,
   heuresConnectees,
   numProgrammeDpc,
+  eligibleDpc,
 });
 
 describe('formatLabel', () => {
@@ -75,6 +78,24 @@ describe('eppConnecte (2 booléens indépendants)', () => {
   });
   it('pas de module EPP du tout → false', () => {
     expect(eppConnecte([mod('15', 3.5)], 'amont')).toBe(false);
+  });
+});
+
+describe('hasEpp / deriveEligibleDpc', () => {
+  it('hasEpp : ∃ module cat 22 ou 21', () => {
+    expect(hasEpp([mod('22', 0), mod('15', 3.5)])).toBe(true);
+    expect(hasEpp([mod('15', 3.5), mod('21', 0)])).toBe(true);
+    expect(hasEpp([mod('15', 3.5)])).toBe(false); // pas d'EPP
+    expect(hasEpp([])).toBe(false);
+  });
+  it('deriveEligibleDpc : eligible_dpc="1" du module CŒUR', () => {
+    // cœur cat 15 = "1" → éligible (les EPP à "0" ne comptent pas)
+    expect(deriveEligibleDpc([mod('22', 0, '', '0'), mod('15', 3.5, '', '1'), mod('21', 0, '', '0')])).toBe(true);
+    // cœur cat 3 = "0" → non éligible
+    expect(deriveEligibleDpc([mod('3', 0, '', '0'), mod('22', 0, '', '1')])).toBe(false);
+    // pas de cœur → repli sur le 1er module
+    expect(deriveEligibleDpc([mod('22', 0, '', '1')])).toBe(true);
+    expect(deriveEligibleDpc([])).toBe(false);
   });
 });
 
