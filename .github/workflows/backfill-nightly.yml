@@ -1,0 +1,65 @@
+name: Backfill nocturne (réconciliation miroir)
+
+on:
+  schedule:
+    # 01:00 UTC ≈ 02:00 Paris (CET/hiver) / 03:00 Paris (CEST/été).
+    # GitHub cron est en UTC et NE gère PAS l'heure d'été → fenêtre nocturne ~02-03h Paris.
+    - cron: '0 1 * * *'
+  workflow_dispatch: {} # déclenchement manuel (test à la demande)
+
+permissions:
+  contents: read
+
+concurrency:
+  group: backfill-mirror # jamais 2 backfills en parallèle (miroir Firestore partagé)
+  cancel-in-progress: false
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      HUSKY: '0' # pas d'install de hooks git en CI
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      # Install COMPLET : tsx (devDep) est REQUIS pour exécuter le backfill.
+      # Ne PAS utiliser --omit=dev.
+      - name: Install (npm ci complet)
+        run: npm ci
+
+      - name: Réconciliation nocturne (années glissantes)
+        env:
+          DENDREO_API_KEY: ${{ secrets.DENDREO_API_KEY }}
+          DENDREO_BASE_URL: ${{ secrets.DENDREO_BASE_URL }}
+          FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
+          FIREBASE_CLIENT_EMAIL: ${{ secrets.FIREBASE_CLIENT_EMAIL }}
+          FIREBASE_PRIVATE_KEY: ${{ secrets.FIREBASE_PRIVATE_KEY }}
+          # ⚠️ NE JAMAIS définir FIRESTORE_EMULATOR_HOST ici (sinon écrit dans le vide).
+        run: |
+          YEARS="$(npx tsx scripts/reco-years.mjs nightly)"
+          echo "Années à réconcilier (nightly) : $YEARS"
+          for Y in $YEARS; do
+            echo "::group::backfill --year $Y --force"
+            # Choix quota (cf. S9.0a) : le backfill s'arrête PROPREMENT (exit 0) et
+            # se reprend si le quota Firestore est atteint. On NE met PAS
+            # continue-on-error (qui masquerait un vrai bug) : on inspecte la sortie.
+            #   - exit 0 (dont arrêt propre quota) → OK
+            #   - exit != 0 AVEC RESOURCE_EXHAUSTED → cas limite (quota au 1er appel) :
+            #     warning non bloquant, repris au prochain run
+            #   - exit != 0 SANS quota → échec réel → on fait échouer le job
+            if npm run backfill -- --year "$Y" --force 2>&1 | tee "/tmp/bf-$Y.log"; then
+              echo "année $Y : OK"
+            elif grep -qiE "RESOURCE_EXHAUSTED|Quota exceeded" "/tmp/bf-$Y.log"; then
+              echo "::warning::année $Y : quota Firestore atteint → arrêt propre, repris au prochain run (non bloquant)"
+            else
+              echo "::error::année $Y : échec réel du backfill"
+              exit 1
+            fi
+            echo "::endgroup::"
+          done

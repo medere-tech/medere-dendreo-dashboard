@@ -1,0 +1,57 @@
+name: Backfill mensuel (réconciliation complète)
+
+on:
+  schedule:
+    # Le 1er de chaque mois, 02:00 UTC ≈ 03:00 Paris (hiver) / 04:00 Paris (été).
+    # GitHub cron est en UTC, pas de gestion DST → fenêtre nocturne ~03-04h Paris.
+    # Décalé d'1 h après le nocturne (01:00 UTC) pour ne pas se chevaucher le 1er.
+    - cron: '0 2 1 * *'
+  workflow_dispatch: {} # déclenchement manuel
+
+permissions:
+  contents: read
+
+concurrency:
+  group: backfill-mirror # partagé avec le nocturne → jamais 2 backfills en parallèle
+  cancel-in-progress: false
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60 # reco complète (RECO_START_YEAR → année en cours) = plus long
+    env:
+      HUSKY: '0'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install (npm ci complet)
+        run: npm ci
+
+      - name: Réconciliation complète (RECO_START_YEAR → année en cours)
+        env:
+          DENDREO_API_KEY: ${{ secrets.DENDREO_API_KEY }}
+          DENDREO_BASE_URL: ${{ secrets.DENDREO_BASE_URL }}
+          FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
+          FIREBASE_CLIENT_EMAIL: ${{ secrets.FIREBASE_CLIENT_EMAIL }}
+          FIREBASE_PRIVATE_KEY: ${{ secrets.FIREBASE_PRIVATE_KEY }}
+          # ⚠️ NE JAMAIS définir FIRESTORE_EMULATOR_HOST ici.
+        run: |
+          YEARS="$(npx tsx scripts/reco-years.mjs monthly)"
+          echo "Années à réconcilier (monthly) : $YEARS"
+          for Y in $YEARS; do
+            echo "::group::backfill --year $Y --force"
+            if npm run backfill -- --year "$Y" --force 2>&1 | tee "/tmp/bf-$Y.log"; then
+              echo "année $Y : OK"
+            elif grep -qiE "RESOURCE_EXHAUSTED|Quota exceeded" "/tmp/bf-$Y.log"; then
+              echo "::warning::année $Y : quota Firestore atteint → arrêt propre, repris au prochain run (non bloquant)"
+            else
+              echo "::error::année $Y : échec réel du backfill"
+              exit 1
+            fi
+            echo "::endgroup::"
+          done
