@@ -201,3 +201,32 @@ describe('GET /api/export/sheet — borne haute (aujourd\'hui Paris) + tri', () 
     expect(getMock).toHaveBeenCalledTimes(2);
   });
 });
+
+describe('GET /api/export/sheet — exclusion "Échec" (règle cockpit)', () => {
+  const TODAY = '2026-07-10';
+  // Deux sessions IDENTIQUES (même dateFin dans la fenêtre) sauf l'étape.
+  const ECHEC = { ...rawWith('echec', '2026-05-10T00:00:00'), etape: 'Échec' };
+  const REALISATION = { ...rawWith('real', '2026-05-10T00:00:00'), etape: 'Réalisation' };
+
+  beforeEach(() => {
+    getMock.mockReset();
+    getMock.mockResolvedValue(asDocs([ECHEC, REALISATION]));
+    process.env.SHEET_EXPORT_TOKEN = TOKEN;
+    setToday(TODAY);
+  });
+
+  const ids = (body: { rows: string[][] }) => body.rows.map((r) => r[0]);
+
+  it('session Échec dans la fenêtre → EXCLUE ; session Réalisation identique → incluse', async () => {
+    const GET = await freshRoute();
+    const body = await (await GET(req(`Bearer ${TOKEN}`))).json();
+    expect(ids(body)).toEqual(['real']); // 'echec' retirée, seule 'real' reste
+  });
+
+  it('libellé Échec insensible casse/accents (réutilise isEchecEtape) → EXCLUE', async () => {
+    getMock.mockResolvedValue(asDocs([{ ...rawWith('e2', '2026-05-10T00:00:00'), etape: 'ECHEC' }, REALISATION]));
+    const GET = await freshRoute();
+    const body = await (await GET(req(`Bearer ${TOKEN}`))).json();
+    expect(ids(body)).toEqual(['real']);
+  });
+});

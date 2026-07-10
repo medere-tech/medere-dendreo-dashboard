@@ -1,6 +1,7 @@
 import { getDb } from '@shared/firebase/admin';
 import { toSessionDoc, type SessionDoc } from '@/lib/firestore/sessions';
 import { SESSIONS_SHEET_HEADERS, sessionToSheetRow } from '@/lib/sessions/export';
+import { isEchecEtape } from '@/lib/sessions/derive';
 import { isSheetExportAuthorized } from '@/lib/server/sheet-auth';
 import { todayInParis } from '@/lib/time';
 
@@ -11,12 +12,15 @@ import { todayInParis } from '@/lib/time';
  * Script (S10.2) mette à jour un Google Sheet EN PLACE sans écraser les colonnes
  * manuelles. Source unique de présentation = `export.ts` (zéro duplication).
  *
- * Fenêtre de dates (sur `dateFin`, jour Paris naïf `slice(0,10)`, jamais d'UTC) :
- *  - BORNE HAUTE = aujourd'hui Paris, TOUJOURS appliquée (même règle que le cockpit
- *    `isCockpitVisible`) → aucune session future. Recalculée à chaque requête
- *    (jamais codée en dur) : elle change seule chaque jour.
+ * Visibilité = STRICTEMENT la règle du cockpit (`isCockpitVisible`) + borne basse
+ * optionnelle. Une session est renvoyée si :
+ *  - elle n'est PAS en étape "Échec" (`isEchecEtape` réutilisée — S10.1d) ; ET
+ *  - BORNE HAUTE : `dateFin <= aujourd'hui Paris`, TOUJOURS appliquée → aucune
+ *    session future. Recalculée à chaque requête (jamais codée en dur) : change
+ *    seule chaque jour ; ET
  *  - `?finFrom=AAAA-MM-JJ` (S10.1b, optionnel) → borne basse. Combiné :
- *    `finFrom <= dateFin <= aujourd'hui`. Absent → seulement la borne haute.
+ *    `finFrom <= dateFin <= aujourd'hui`.
+ * Dates sur `dateFin`, jour Paris naïf `slice(0,10)`, jamais d'UTC.
  * Lignes triées par `dateFin` CROISSANTE (plus anciennes d'abord ; égalité →
  * `numeroComplet` pour un ordre déterministe).
  *
@@ -70,6 +74,7 @@ async function buildPayload(finFrom: string | null, today: string): Promise<Shee
   const sessions = snap.docs
     .map((d) => toSessionDoc(d.data()))
     .filter((s) => {
+      if (isEchecEtape(s.etape)) return false; // hors "Échec" — même règle que isCockpitVisible
       const fin = s.dateFin.slice(0, 10);
       if (fin > today) return false; // borne haute = aujourd'hui Paris (TOUJOURS)
       if (finFrom && fin < finFrom) return false; // borne basse optionnelle
