@@ -5,6 +5,7 @@ import { suiviSignaturesUrl } from '@/lib/dendreo';
 import {
   RELANCE_CSV_HEADERS,
   SESSIONS_CSV_HEADERS,
+  SESSIONS_SHEET_HEADERS,
   attestationManquante,
   ddmmyy,
   ddmmyyFromInstant,
@@ -15,6 +16,7 @@ import {
   sessionsCsvFilename,
   sessionsToCsv,
   sessionToCsvRow,
+  sessionToSheetRow,
   signaturesSummary,
 } from './export';
 
@@ -136,6 +138,29 @@ describe('COCKPIT — colonnes & mapping', () => {
     const lines = csv.split('\r\n');
     expect(lines).toHaveLength(3); // 1 entête + 2 lignes filtrées
     expect(lines[0]!.startsWith('DPC;Intitulé;')).toBe(true);
+  });
+});
+
+describe('COCKPIT — variante "sheet" (idAdf + réutilisation du CSV)', () => {
+  it('entêtes sheet = idAdf en 1re colonne, puis EXACTEMENT les entêtes CSV', () => {
+    expect(SESSIONS_SHEET_HEADERS).toEqual(['idAdf', ...SESSIONS_CSV_HEADERS]);
+    expect(SESSIONS_SHEET_HEADERS[0]).toBe('idAdf');
+  });
+
+  it('sessionToSheetRow : idAdf en 1re colonne, colonnes suivantes == sessionToCsvRow (zéro logique dupliquée)', () => {
+    const s = session({ idAdf: '2656', aCheval: true, eppAmontConnecte: true });
+    const row = sessionToSheetRow(s);
+    expect(row[0]).toBe('2656'); // clé de correspondance
+    expect(row).toHaveLength(SESSIONS_SHEET_HEADERS.length); // = 1 + 19
+    // La preuve de réutilisation : tout après idAdf == la ligne CSV telle quelle.
+    expect(row.slice(1)).toEqual(sessionToCsvRow(s));
+  });
+
+  it('sessionToSheetRow : idAdf vide reste en 1re colonne (pas de crash, cohérent CSV)', () => {
+    const s = session({ idAdf: '' });
+    const row = sessionToSheetRow(s);
+    expect(row[0]).toBe('');
+    expect(row.slice(1)).toEqual(sessionToCsvRow(s));
   });
 });
 

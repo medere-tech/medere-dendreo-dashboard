@@ -83,6 +83,19 @@ export function sessionsToCsv(rows: readonly SessionDoc[]): string {
   return buildCsv(SESSIONS_CSV_HEADERS, rows.map(sessionToCsvRow));
 }
 
+// --- COCKPIT — variante "sheet" (S10.1, route /api/export/sheet) -------------
+// EXACTEMENT l'export CSV cockpit, préfixé de la clé `idAdf` en 1re colonne. Cette
+// clé permet à l'Apps Script (S10.2) de mettre à jour le Google Sheet EN PLACE,
+// ligne par ligne, sans écraser les colonnes remplies à la main par les Ops.
+// ZÉRO logique dupliquée : la ligne sheet = `idAdf` + `sessionToCsvRow(s)` tel
+// quel ; les entêtes = 'idAdf' + `SESSIONS_CSV_HEADERS`. Toute évolution de colonne
+// du CSV se propage donc automatiquement à la route sheet (source unique).
+export const SESSIONS_SHEET_HEADERS = ['idAdf', ...SESSIONS_CSV_HEADERS] as const;
+
+export function sessionToSheetRow(s: SessionDoc): string[] {
+  return [s.idAdf, ...sessionToCsvRow(s)];
+}
+
 // --- À RELANCER --------------------------------------------------------------
 export const RELANCE_CSV_HEADERS = [
   'Participant', 'N° session DPC', 'Intitulé', 'Document', 'Envoyée le', 'Ancienneté (jours)', 'Lien Dendreo',
