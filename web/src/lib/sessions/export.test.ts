@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import type { SessionDoc } from '@/lib/firestore/sessions';
 import type { RelanceRow } from './relance';
 import { suiviSignaturesUrl } from '@/lib/dendreo';
+import { EMPTY_DISPLAY } from '@/lib/format';
 import {
   RELANCE_CSV_HEADERS,
   SESSIONS_CSV_HEADERS,
@@ -59,21 +60,21 @@ describe('helpers de mapping', () => {
     expect(ddmmyyFromInstant('2026-06-01T08:00:00.000000Z')).toBe('01/06/26');
     expect(ddmmyyFromInstant(null)).toBe('');
   });
-  it('eppCoNc : "—" si pas d\'EPP, sinon {amont}/{aval}', () => {
-    expect(eppCoNc({ aEpp: false, eppAmontConnecte: false, eppAvalConnecte: false })).toBe('—');
-    expect(eppCoNc({ aEpp: false, eppAmontConnecte: true, eppAvalConnecte: true })).toBe('—'); // aEpp prime
+  it('eppCoNc : EMPTY_DISPLAY si pas d\'EPP, sinon {amont}/{aval}', () => {
+    expect(eppCoNc({ aEpp: false, eppAmontConnecte: false, eppAvalConnecte: false })).toBe(EMPTY_DISPLAY);
+    expect(eppCoNc({ aEpp: false, eppAmontConnecte: true, eppAvalConnecte: true })).toBe(EMPTY_DISPLAY); // aEpp prime
     expect(eppCoNc({ aEpp: true, eppAmontConnecte: true, eppAvalConnecte: true })).toBe('CO/CO');
     expect(eppCoNc({ aEpp: true, eppAmontConnecte: false, eppAvalConnecte: true })).toBe('NC/CO');
     expect(eppCoNc({ aEpp: true, eppAmontConnecte: true, eppAvalConnecte: false })).toBe('CO/NC');
     expect(eppCoNc({ aEpp: true, eppAmontConnecte: false, eppAvalConnecte: false })).toBe('NC/NC');
   });
   it('signaturesSummary : 0 envoyé / tous signés / à relancer', () => {
-    expect(signaturesSummary({ envoyes: 0, signes: 0, nonSignes: 0, participantsConcernes: 0, participantsARelancer: 0 })).toBe('—');
+    expect(signaturesSummary({ envoyes: 0, signes: 0, nonSignes: 0, participantsConcernes: 0, participantsARelancer: 0 })).toBe(EMPTY_DISPLAY);
     expect(signaturesSummary({ envoyes: 3, signes: 3, nonSignes: 0, participantsConcernes: 3, participantsARelancer: 0 })).toBe('Tous ont signé');
     expect(signaturesSummary({ envoyes: 3, signes: 1, nonSignes: 2, participantsConcernes: 3, participantsARelancer: 2 })).toBe('2 à relancer');
   });
-  it('attestationManquante : 0 envoyé → "—" / tout signé → "Signature complète" / 2 sur 30 → "2/30"', () => {
-    expect(attestationManquante(counts(0, 0))).toBe('—');
+  it('attestationManquante : 0 envoyé → EMPTY_DISPLAY / tout signé → "Signature complète" / 2 sur 30 → "2/30"', () => {
+    expect(attestationManquante(counts(0, 0))).toBe(EMPTY_DISPLAY);
     expect(attestationManquante(counts(30, 30))).toBe('Signature complète');
     expect(attestationManquante(counts(30, 28))).toBe('2/30');
   });
@@ -127,10 +128,10 @@ describe('COCKPIT — colonnes & mapping', () => {
     expect(row[4]).toBe('');
   });
 
-  it('DPC=FALSE si non éligible ; EPP="—" si pas d\'EPP', () => {
+  it('DPC=FALSE si non éligible ; EPP=EMPTY_DISPLAY si pas d\'EPP', () => {
     const row = sessionToCsvRow(session({ eligibleDpc: false, aEpp: false, eppAmontConnecte: true }));
     expect(row[0]).toBe('FALSE'); // DPC
-    expect(row[7]).toBe('—'); // EPP CO/NC — pas d'EPP
+    expect(row[7]).toBe(EMPTY_DISPLAY); // EPP CO/NC — pas d'EPP
   });
 
   it('sessionsToCsv : exporte EXACTEMENT les lignes fournies (entête + N lignes)', () => {

@@ -1,5 +1,6 @@
 import type { SessionDoc } from '@/lib/firestore/sessions';
 import { suiviSignaturesUrl } from '@/lib/dendreo';
+import { EMPTY_DISPLAY } from '@/lib/format';
 import { IconCheck, IconExternalLink } from '@/components/icons';
 
 /**
@@ -8,9 +9,9 @@ import { IconCheck, IconExternalLink } from '@/components/icons';
  * valoir ""/false tant que le backfill S5.1b n'a pas tourné → défauts propres.
  */
 
-/** Puce Format courte, neutre. Vide → « — ». */
+/** Puce Format courte, neutre. Vide → EMPTY_DISPLAY. */
 export function FormatPill({ format }: { format: string }) {
-  if (!format) return <span className="text-faint">—</span>;
+  if (!format) return <span className="text-faint">{EMPTY_DISPLAY}</span>;
   return <span className="whitespace-nowrap rounded-md bg-canvas px-2 py-0.5 text-xs text-muted">{format}</span>;
 }
 
@@ -30,9 +31,9 @@ export function EppCheck({ checked, label }: { checked: boolean; label: string }
   );
 }
 
-/** Badge « à cheval » : années dateDebut→dateFin si vrai, sinon « — ». Neutre. */
+/** Badge « à cheval » : années dateDebut→dateFin si vrai, sinon EMPTY_DISPLAY. Neutre. */
 export function AChevalBadge({ session }: { session: SessionDoc }) {
-  if (!session.aCheval) return <span className="text-faint">—</span>;
+  if (!session.aCheval) return <span className="text-faint">{EMPTY_DISPLAY}</span>;
   const y1 = session.dateDebut.slice(0, 4);
   const y2 = session.dateFin.slice(0, 4);
   const text = y1.length === 4 && y2.length === 4 ? `${y1}→${y2}` : 'Oui';
@@ -51,7 +52,7 @@ export function FormationLink({ session }: { session: SessionDoc }) {
       title="Ouvrir l’espace signatures dans Dendreo"
       className="font-medium text-ink underline-offset-2 hover:underline"
     >
-      {session.intitule || '—'}
+      {session.intitule || EMPTY_DISPLAY}
     </a>
   );
 }

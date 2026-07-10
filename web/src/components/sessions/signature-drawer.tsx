@@ -13,7 +13,7 @@ import {
   type SignatureDoc,
   type SignatureFilter,
 } from '@/lib/firestore/sessions';
-import { formatInstantParisFr } from '@/lib/format';
+import { EMPTY_DISPLAY, formatInstantParisFr } from '@/lib/format';
 import { normalizeText } from '@/lib/sessions/derive';
 import { IconSearch } from '@/components/icons';
 
@@ -201,7 +201,7 @@ function SignatureRow({ row }: { row: SignatureDoc }) {
           Ouvrir dans Dendreo
         </a>
       ) : (
-        <span className="shrink-0 text-xs text-faint">—</span>
+        <span className="shrink-0 text-xs text-faint">{EMPTY_DISPLAY}</span>
       )}
     </li>
   );

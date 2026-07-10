@@ -1,6 +1,7 @@
 import { EMPTY_COUNTS, type Counts, type SessionDoc } from '@/lib/firestore/sessions';
 import type { RelanceRow } from './relance';
 import { parisDayOfInstant } from '@/lib/time';
+import { EMPTY_DISPLAY } from '@/lib/format';
 import { buildCsv } from '@/lib/csv';
 import { suiviSignaturesUrl } from '@/lib/dendreo';
 
@@ -23,26 +24,26 @@ export function ddmmyyFromInstant(instant: string | null | undefined): string {
 }
 
 /**
- * EPP CO/NC (S6.2) : `—` si la session n'a AUCUN module EPP (`aEpp=false`),
+ * EPP CO/NC (S6.2) : EMPTY_DISPLAY si la session n'a AUCUN module EPP (`aEpp=false`),
  * sinon `{amont}/{aval}` avec CO = connecté (heures connectées > 0), NC = non connecté.
- * Ex. "—", "CO/CO", "NC/CO", "NC/NC".
+ * Ex. "-", "CO/CO", "NC/CO", "NC/NC".
  */
 export function eppCoNc(s: Pick<SessionDoc, 'eppAmontConnecte' | 'eppAvalConnecte' | 'aEpp'>): string {
-  if (!s.aEpp) return '—';
+  if (!s.aEpp) return EMPTY_DISPLAY;
   return `${s.eppAmontConnecte ? 'CO' : 'NC'}/${s.eppAvalConnecte ? 'CO' : 'NC'}`;
 }
 
 /** Résumé signatures lisible pour la colonne "Signatures". */
 export function signaturesSummary(c: Counts): string {
-  if (c.envoyes === 0) return '—'; // rien d'envoyé → ni "tous signé" ni "à relancer"
+  if (c.envoyes === 0) return EMPTY_DISPLAY; // rien d'envoyé → ni "tous signé" ni "à relancer"
   if (c.nonSignes === 0) return 'Tous ont signé';
   return `${c.nonSignes} à relancer`;
 }
 
-/** Colonne "Attestation manquante" : "—" si 0 envoyé, "Signature complète" si tout
- *  signé, sinon "{nonSignes}/{envoyes}" (non signées / envoyées). */
+/** Colonne "Attestation manquante" : EMPTY_DISPLAY si 0 envoyé, "Signature complète" si
+ *  tout signé, sinon "{nonSignes}/{envoyes}" (non signées / envoyées). */
 export function attestationManquante(c: Counts): string {
-  if (c.envoyes === 0) return '—';
+  if (c.envoyes === 0) return EMPTY_DISPLAY;
   if (c.nonSignes === 0) return 'Signature complète';
   return `${c.nonSignes}/${c.envoyes}`;
 }

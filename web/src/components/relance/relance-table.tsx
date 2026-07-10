@@ -2,7 +2,7 @@
 
 import type { ReactNode } from 'react';
 import type { RelanceRow, RelanceSortDir } from '@/lib/sessions/relance';
-import { formatAgeDays, formatInstantParisFr, orDash } from '@/lib/format';
+import { EMPTY_DISPLAY, formatAgeDays, formatInstantParisFr, orDash } from '@/lib/format';
 
 /**
  * Table desktop « À relancer » — une ligne par attestation. Tri sur « Envoyée le »
@@ -68,7 +68,7 @@ function Th({ children, className = '' }: { children: ReactNode; className?: str
 }
 
 export function OpenLink({ url }: { url: string | null }) {
-  if (!url) return <span className="text-xs text-faint">—</span>;
+  if (!url) return <span className="text-xs text-faint">{EMPTY_DISPLAY}</span>;
   return (
     <a
       href={url}
