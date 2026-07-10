@@ -22,8 +22,12 @@ const RAW_SESSION = {
   oldestPendingSentDate: null, lastSyncedAt: '2026-07-09T10:00:00.000Z', source: 'dendreo',
 };
 
-const req = (auth?: string): Request =>
-  new Request('https://app/api/export/sheet', { headers: auth ? { authorization: auth } : {} });
+const req = (auth?: string, query = ''): Request =>
+  new Request(`https://app/api/export/sheet${query}`, { headers: auth ? { authorization: auth } : {} });
+
+/** Doc brut dérivé de RAW_SESSION avec un `idAdf` + `dateFin` donnés (tests filtre). */
+const rawWith = (idAdf: string, dateFin: string) => ({ ...RAW_SESSION, idAdf, dateFin });
+const asDocs = (raws: object[]) => ({ docs: raws.map((r) => ({ data: () => r })) });
 
 /** Ré-importe la route AVEC un cache module-level vierge (resetModules). */
 async function freshRoute() {
@@ -86,5 +90,51 @@ describe('GET /api/export/sheet', () => {
     const res = await GET(req(`Bearer ${TOKEN}`));
     expect(res.status).toBe(500);
     expect(await res.json()).toMatchObject({ error: 'export failed' });
+  });
+});
+
+describe('GET /api/export/sheet — filtre ?finFrom', () => {
+  // 3 sessions : avant / pile sur la borne / après le 2026-06-01.
+  const AVANT = rawWith('avant', '2026-02-20T23:59:59');
+  const BORNE = rawWith('borne', '2026-06-01T00:00:00'); // == finFrom → INCLUS
+  const APRES = rawWith('apres', '2026-08-15T10:00:00');
+
+  beforeEach(() => {
+    getMock.mockReset();
+    getMock.mockResolvedValue(asDocs([AVANT, BORNE, APRES]));
+    process.env.SHEET_EXPORT_TOKEN = TOKEN;
+  });
+
+  const ids = (body: { rows: string[][] }) => body.rows.map((r) => r[0]);
+
+  it('sans finFrom → toutes les sessions (rétrocompatible)', async () => {
+    const GET = await freshRoute();
+    const body = await (await GET(req(`Bearer ${TOKEN}`))).json();
+    expect(ids(body)).toEqual(['avant', 'borne', 'apres']);
+  });
+
+  it('finFrom=2026-06-01 → seulement dateFin >= borne (borne INCLUSE)', async () => {
+    const GET = await freshRoute();
+    const body = await (await GET(req(`Bearer ${TOKEN}`, '?finFrom=2026-06-01'))).json();
+    expect(ids(body)).toEqual(['borne', 'apres']); // 'avant' exclu, 'borne' inclus (>=)
+  });
+
+  it('format finFrom invalide → 400, ne lit PAS Firestore', async () => {
+    const GET = await freshRoute();
+    for (const bad of ['2026-6-1', '01/06/2026', '2026-06', 'hier', '']) {
+      const res = await GET(req(`Bearer ${TOKEN}`, `?finFrom=${encodeURIComponent(bad)}`));
+      expect(res.status).toBe(400);
+    }
+    expect(getMock).not.toHaveBeenCalled();
+  });
+
+  it('cache PAR VALEUR de finFrom : 2 valeurs distinctes → 2 lectures ; répétition → cache', async () => {
+    const GET = await freshRoute();
+    await GET(req(`Bearer ${TOKEN}`)); // clé 'all'
+    await GET(req(`Bearer ${TOKEN}`, '?finFrom=2026-06-01')); // clé '2026-06-01'
+    expect(getMock).toHaveBeenCalledTimes(2); // 2 entrées de cache distinctes
+    await GET(req(`Bearer ${TOKEN}`)); // 'all' re-servi par le cache
+    await GET(req(`Bearer ${TOKEN}`, '?finFrom=2026-06-01')); // idem
+    expect(getMock).toHaveBeenCalledTimes(2); // toujours 2 : aucune relecture
   });
 });
