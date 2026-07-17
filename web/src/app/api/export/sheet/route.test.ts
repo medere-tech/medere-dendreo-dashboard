@@ -2,14 +2,41 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { SESSIONS_CSV_HEADERS } from '@/lib/sessions/export';
 import { sessionToCsvRow } from '@/lib/sessions/export';
 import { toSessionDoc } from '@/lib/firestore/sessions';
+import { EMPTY_DISPLAY } from '@/lib/format';
 import { todayInParis } from '@/lib/time';
 
-// Mock de l'Admin SDK → aucun I/O Firestore. `getMock` est hoisté et STABLE entre
-// resetModules : on peut compter les lectures réelles (test du cache).
-const { getMock } = vi.hoisted(() => ({ getMock: vi.fn() }));
-vi.mock('@shared/firebase/admin', () => ({
-  getDb: () => ({ collection: () => ({ get: getMock }) }),
+// Mock de l'Admin SDK → aucun I/O Firestore. Les mocks sont hoistés et STABLES entre
+// resetModules : on peut compter les lectures réelles (test des caches).
+// UN mock par collection : `sessions` (.get) et `signatures` (.where().select().get()),
+// pour compter séparément les deux lectures et prouver le cache pending dédié.
+const { getMock, pendingGetMock, whereSpy, selectSpy } = vi.hoisted(() => ({
+  getMock: vi.fn(),
+  pendingGetMock: vi.fn(),
+  whereSpy: vi.fn(),
+  selectSpy: vi.fn(),
 }));
+vi.mock('@shared/firebase/admin', () => ({
+  getDb: () => ({
+    collection: (name: string) =>
+      name === 'signatures'
+        ? {
+            where: (...args: unknown[]) => {
+              whereSpy(...args);
+              return {
+                select: (...fields: unknown[]) => {
+                  selectSpy(...fields);
+                  return { get: pendingGetMock };
+                },
+              };
+            },
+          }
+        : { get: getMock },
+  }),
+}));
+
+/** Docs signature pending BRUTS (forme miroir, champs `select`és). */
+const asPending = (raws: object[]) => ({ docs: raws.map((r) => ({ data: () => r })) });
+const pending = (idAdf: string, idParticipant: string, nom: string) => ({ idAdf, idParticipant, nom });
 
 // « Aujourd'hui Paris » INJECTABLE (déterministe) : on ne mocke QUE todayInParis,
 // le reste de @/lib/time (parisDayOfInstant…) garde son implémentation réelle.
@@ -46,7 +73,14 @@ async function freshRoute() {
 
 // Par défaut « aujourd'hui » très loin dans le futur → la borne haute n'exclut RIEN
 // dans les tests qui ne s'y intéressent pas (auth, réutilisation CSV, finFrom…).
-beforeEach(() => setToday('2999-12-31'));
+// Par défaut AUCUN pending : les tests qui ne parlent pas des noms voient "-".
+beforeEach(() => {
+  setToday('2999-12-31');
+  pendingGetMock.mockReset();
+  pendingGetMock.mockResolvedValue(asPending([]));
+  whereSpy.mockReset();
+  selectSpy.mockReset();
+});
 
 describe('GET /api/export/sheet', () => {
   beforeEach(() => {
@@ -60,6 +94,7 @@ describe('GET /api/export/sheet', () => {
     const res = await GET(req());
     expect(res.status).toBe(401);
     expect(getMock).not.toHaveBeenCalled();
+    expect(pendingGetMock).not.toHaveBeenCalled(); // ni sessions, ni signatures
   });
 
   it('token invalide → 401, aucune lecture Firestore', async () => {
@@ -67,6 +102,7 @@ describe('GET /api/export/sheet', () => {
     const res = await GET(req('Bearer mauvais-token'));
     expect(res.status).toBe(401);
     expect(getMock).not.toHaveBeenCalled();
+    expect(pendingGetMock).not.toHaveBeenCalled();
   });
 
   it('token valide → 200 + { headers, rows }', async () => {
@@ -79,15 +115,15 @@ describe('GET /api/export/sheet', () => {
     expect(body.rows).toHaveLength(1);
   });
 
-  it('idAdf en 1re colonne ; colonnes suivantes == EXACTEMENT l\'export CSV (réutilisation prouvée)', async () => {
+  it('idAdf en 1re colonne ; colonnes du milieu == EXACTEMENT l\'export CSV (réutilisation prouvée)', async () => {
     const GET = await freshRoute();
     const body = await (await GET(req(`Bearer ${TOKEN}`))).json();
-    // entêtes = 'idAdf' + les entêtes CSV
-    expect(body.headers).toEqual(['idAdf', ...SESSIONS_CSV_HEADERS]);
+    // entêtes = 'idAdf' + les entêtes CSV + la colonne noms EN DERNIER
+    expect(body.headers).toEqual(['idAdf', ...SESSIONS_CSV_HEADERS, 'À relancer (noms)']);
     const row = body.rows[0];
     expect(row[0]).toBe('2691'); // clé de correspondance
-    // tout après idAdf == la ligne CSV normalisée telle quelle
-    expect(row.slice(1)).toEqual(sessionToCsvRow(toSessionDoc(RAW_SESSION)));
+    // entre idAdf et les noms == la ligne CSV normalisée telle quelle
+    expect(row.slice(1, -1)).toEqual(sessionToCsvRow(toSessionDoc(RAW_SESSION)));
   });
 
   it('cache ~60s : 2 appels rapprochés → UNE seule lecture Firestore', async () => {
@@ -139,6 +175,7 @@ describe('GET /api/export/sheet — filtre ?finFrom', () => {
       expect(res.status).toBe(400);
     }
     expect(getMock).not.toHaveBeenCalled();
+    expect(pendingGetMock).not.toHaveBeenCalled();
   });
 
   it('cache PAR VALEUR de finFrom : 2 valeurs distinctes → 2 lectures ; répétition → cache', async () => {
@@ -228,5 +265,115 @@ describe('GET /api/export/sheet — exclusion "Échec" (règle cockpit)', () => 
     const GET = await freshRoute();
     const body = await (await GET(req(`Bearer ${TOKEN}`))).json();
     expect(ids(body)).toEqual(['real']);
+  });
+});
+
+// --- S10.2b : colonne "À relancer (noms)" -----------------------------------
+describe('GET /api/export/sheet — colonne "À relancer (noms)"', () => {
+  const TODAY = '2026-07-10';
+  /** Dernière cellule (la colonne noms) de la ligne d'idAdf donné. */
+  const nomsDe = (body: { rows: string[][] }, idAdf: string) => body.rows.find((r) => r[0] === idAdf)?.at(-1);
+  const ids = (body: { rows: string[][] }) => body.rows.map((r) => r[0]);
+
+  beforeEach(() => {
+    getMock.mockReset();
+    process.env.SHEET_EXPORT_TOKEN = TOKEN;
+    setToday(TODAY);
+  });
+
+  it('requête pending : where(status,==,pending) + select(3 champs), SANS orderBy (aucun index composite)', async () => {
+    getMock.mockResolvedValue(asDocs([rawWith('s1', '2026-05-10T00:00:00')]));
+    const GET = await freshRoute();
+    await GET(req(`Bearer ${TOKEN}`));
+    expect(whereSpy).toHaveBeenCalledWith('status', '==', 'pending');
+    expect(selectSpy).toHaveBeenCalledWith('idAdf', 'idParticipant', 'nom');
+    expect(whereSpy).toHaveBeenCalledTimes(1); // UNE seule requête, jamais une par session
+  });
+
+  it('DÉDUP par participant : 7 attestations / 5 personnes → 5 noms, et nb noms == counts.participantsARelancer', async () => {
+    // Cas réel ADF_20250278 (idAdf=3094) : envoyes 37, signes 30, nonSignes 7, participantsARelancer 5.
+    const S3094 = {
+      ...rawWith('3094', '2026-05-10T00:00:00'),
+      counts: { envoyes: 37, signes: 30, nonSignes: 7, participantsConcernes: 22, participantsARelancer: 5 },
+    };
+    getMock.mockResolvedValue(asDocs([S3094]));
+    // 7 attestations pending pour 5 personnes distinctes (2 en ont chacune 2 : EPP amont + aval).
+    pendingGetMock.mockResolvedValue(
+      asPending([
+        pending('3094', '452006', 'Prescillia N Dalla IKOUEBE'),
+        pending('3094', '452766', 'Hugo CASTAN'),
+        pending('3094', '452766', 'Hugo CASTAN'), // même personne, autre doctype
+        pending('3094', '452858', 'Helene GROS-LAFAIGE'),
+        pending('3094', '452878', 'Mireille Pierrette REA'),
+        pending('3094', '452878', 'Mireille Pierrette REA'), // idem
+        pending('3094', '453125', 'Sami TIGRE'),
+      ]),
+    );
+    const GET = await freshRoute();
+    const body = await (await GET(req(`Bearer ${TOKEN}`))).json();
+    const cell = nomsDe(body, '3094')!;
+    // Tri alpha, chaque personne UNE seule fois malgré 7 attestations.
+    expect(cell).toBe('Helene GROS-LAFAIGE, Hugo CASTAN, Mireille Pierrette REA, Prescillia N Dalla IKOUEBE, Sami TIGRE');
+    // Cohérence avec le compteur déjà stocké : 5 noms == participantsARelancer.
+    expect(cell.split(', ')).toHaveLength(S3094.counts.participantsARelancer);
+  });
+
+  it('session RETENUE sans aucun pending → "-" (EMPTY_DISPLAY), jamais ""', async () => {
+    getMock.mockResolvedValue(asDocs([rawWith('sansPending', '2026-05-10T00:00:00')]));
+    pendingGetMock.mockResolvedValue(asPending([pending('autre', '1', 'Jean AUTRE')]));
+    const GET = await freshRoute();
+    const body = await (await GET(req(`Bearer ${TOKEN}`))).json();
+    expect(nomsDe(body, 'sansPending')).toBe(EMPTY_DISPLAY);
+  });
+
+  it('ANGLE MORT : les noms d\'une session Échec ou FUTURE ne remontent JAMAIS', async () => {
+    const ECHEC = { ...rawWith('echec', '2026-05-10T00:00:00'), etape: 'Échec' };
+    const FUTURE = rawWith('future', '2026-09-01T00:00:00'); // > TODAY
+    const RETENUE = rawWith('real', '2026-05-10T00:00:00');
+    getMock.mockResolvedValue(asDocs([ECHEC, FUTURE, RETENUE]));
+    // La map pending est GLOBALE : elle contient aussi les pending des sessions filtrées.
+    pendingGetMock.mockResolvedValue(
+      asPending([
+        pending('echec', '900', 'Fantome ECHEC'),
+        pending('future', '901', 'Fantome FUTURE'),
+        pending('real', '902', 'Hugo CASTAN'),
+      ]),
+    );
+    const GET = await freshRoute();
+    const body = await (await GET(req(`Bearer ${TOKEN}`))).json();
+    expect(ids(body)).toEqual(['real']); // seules les sessions retenues ont une ligne
+    expect(nomsDe(body, 'real')).toBe('Hugo CASTAN');
+    // Aucun nom de session filtrée nulle part dans la réponse.
+    const dump = JSON.stringify(body);
+    expect(dump).not.toContain('Fantome ECHEC');
+    expect(dump).not.toContain('Fantome FUTURE');
+  });
+
+  it('CACHE pending SÉPARÉ : 2 finFrom distincts → 2 lectures sessions mais UNE seule lecture signatures', async () => {
+    getMock.mockResolvedValue(asDocs([rawWith('s1', '2026-05-10T00:00:00')]));
+    const GET = await freshRoute();
+    await GET(req(`Bearer ${TOKEN}`)); // clé payload 'all'
+    await GET(req(`Bearer ${TOKEN}`, '?finFrom=2026-01-01')); // clé payload '2026-01-01'
+    expect(getMock).toHaveBeenCalledTimes(2); // 2 entrées de cache payload → 2 lectures sessions
+    expect(pendingGetMock).toHaveBeenCalledTimes(1); // …mais la map pending est PARTAGÉE
+  });
+
+  it('CACHE pending : clé `pending|{jour}` → au changement de jour, relit les signatures', async () => {
+    getMock.mockResolvedValue(asDocs([rawWith('s1', '2026-05-10T00:00:00')]));
+    const GET = await freshRoute();
+    await GET(req(`Bearer ${TOKEN}`));
+    expect(pendingGetMock).toHaveBeenCalledTimes(1);
+    setToday('2026-07-11'); // le lendemain → clé pending neuve
+    await GET(req(`Bearer ${TOKEN}`));
+    expect(pendingGetMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('signatures KO → 500 clair (aucune donnée sensible propagée)', async () => {
+    getMock.mockResolvedValue(asDocs([rawWith('s1', '2026-05-10T00:00:00')]));
+    pendingGetMock.mockRejectedValueOnce(new Error('firestore down'));
+    const GET = await freshRoute();
+    const res = await GET(req(`Bearer ${TOKEN}`));
+    expect(res.status).toBe(500);
+    expect(await res.json()).toMatchObject({ error: 'export failed' });
   });
 });

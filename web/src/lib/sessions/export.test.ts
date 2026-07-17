@@ -12,6 +12,7 @@ import {
   ddmmyyFromInstant,
   eppCoNc,
   relanceCsvFilename,
+  relanceNomsCell,
   relanceToCsv,
   relanceToCsvRow,
   sessionsCsvFilename,
@@ -143,25 +144,68 @@ describe('COCKPIT — colonnes & mapping', () => {
 });
 
 describe('COCKPIT — variante "sheet" (idAdf + réutilisation du CSV)', () => {
-  it('entêtes sheet = idAdf en 1re colonne, puis EXACTEMENT les entêtes CSV', () => {
-    expect(SESSIONS_SHEET_HEADERS).toEqual(['idAdf', ...SESSIONS_CSV_HEADERS]);
+  it('entêtes sheet = idAdf, puis EXACTEMENT les entêtes CSV, puis "À relancer (noms)" EN DERNIER', () => {
+    expect(SESSIONS_SHEET_HEADERS).toEqual(['idAdf', ...SESSIONS_CSV_HEADERS, 'À relancer (noms)']);
     expect(SESSIONS_SHEET_HEADERS[0]).toBe('idAdf');
+    // Position EN DERNIER = les index des colonnes du Sheet Ops ne bougent pas (S10.2b).
+    expect(SESSIONS_SHEET_HEADERS.at(-1)).toBe('À relancer (noms)');
+    expect(SESSIONS_SHEET_HEADERS.at(-2)).toBe('Lien stockage'); // dernière colonne CSV, inchangée
   });
 
-  it('sessionToSheetRow : idAdf en 1re colonne, colonnes suivantes == sessionToCsvRow (zéro logique dupliquée)', () => {
+  it("le CSV cockpit N'A PAS la colonne noms (propre au format sheet)", () => {
+    expect(SESSIONS_CSV_HEADERS).not.toContain('À relancer (noms)');
+    expect(sessionToCsvRow(session({}))).toHaveLength(SESSIONS_CSV_HEADERS.length);
+  });
+
+  it('sessionToSheetRow : idAdf en 1re colonne, colonnes du milieu == sessionToCsvRow (zéro logique dupliquée)', () => {
     const s = session({ idAdf: '2656', aCheval: true, eppAmontConnecte: true });
-    const row = sessionToSheetRow(s);
+    const row = sessionToSheetRow(s, ['Hugo CASTAN']);
     expect(row[0]).toBe('2656'); // clé de correspondance
-    expect(row).toHaveLength(SESSIONS_SHEET_HEADERS.length); // = 1 + 19
-    // La preuve de réutilisation : tout après idAdf == la ligne CSV telle quelle.
-    expect(row.slice(1)).toEqual(sessionToCsvRow(s));
+    expect(row).toHaveLength(SESSIONS_SHEET_HEADERS.length); // = 1 + 19 + 1
+    // La preuve de réutilisation : entre idAdf et les noms == la ligne CSV telle quelle.
+    expect(row.slice(1, -1)).toEqual(sessionToCsvRow(s));
+    expect(row.at(-1)).toBe('Hugo CASTAN');
   });
 
   it('sessionToSheetRow : idAdf vide reste en 1re colonne (pas de crash, cohérent CSV)', () => {
     const s = session({ idAdf: '' });
     const row = sessionToSheetRow(s);
     expect(row[0]).toBe('');
-    expect(row.slice(1)).toEqual(sessionToCsvRow(s));
+    expect(row.slice(1, -1)).toEqual(sessionToCsvRow(s));
+  });
+
+  it('sessionToSheetRow sans noms → EMPTY_DISPLAY en dernière colonne (jamais "")', () => {
+    expect(sessionToSheetRow(session({ idAdf: '1' })).at(-1)).toBe(EMPTY_DISPLAY);
+    expect(sessionToSheetRow(session({ idAdf: '1' }), []).at(-1)).toBe(EMPTY_DISPLAY);
+  });
+});
+
+describe('COCKPIT sheet — cellule "À relancer (noms)" (relanceNomsCell)', () => {
+  it('aucun nom → EMPTY_DISPLAY ("-"), jamais chaîne vide', () => {
+    expect(relanceNomsCell([])).toBe(EMPTY_DISPLAY);
+    expect(relanceNomsCell([])).not.toBe('');
+  });
+
+  it('tri alphabétique + jointure par ", " (format "Prénom NOM" tel que stocké)', () => {
+    expect(relanceNomsCell(['Sami TIGRE', 'Hugo CASTAN', 'Mireille Pierrette REA'])).toBe(
+      'Hugo CASTAN, Mireille Pierrette REA, Sami TIGRE',
+    );
+  });
+
+  it('tri accents-insensible (locale fr) : "Émile" se range à "E", pas après "Z"', () => {
+    expect(relanceNomsCell(['Zoé MARTIN', 'Émile DURAND', 'Alain BERNARD'])).toBe(
+      'Alain BERNARD, Émile DURAND, Zoé MARTIN',
+    );
+  });
+
+  it('ne mute pas le tableau reçu (copie avant tri)', () => {
+    const noms = ['Sami TIGRE', 'Hugo CASTAN'];
+    relanceNomsCell(noms);
+    expect(noms).toEqual(['Sami TIGRE', 'Hugo CASTAN']); // ordre d'origine préservé
+  });
+
+  it('un seul nom → le nom seul, sans séparateur', () => {
+    expect(relanceNomsCell(['Hugo CASTAN'])).toBe('Hugo CASTAN');
   });
 });
 

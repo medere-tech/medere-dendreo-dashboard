@@ -88,13 +88,32 @@ export function sessionsToCsv(rows: readonly SessionDoc[]): string {
 // EXACTEMENT l'export CSV cockpit, préfixé de la clé `idAdf` en 1re colonne. Cette
 // clé permet à l'Apps Script (S10.2) de mettre à jour le Google Sheet EN PLACE,
 // ligne par ligne, sans écraser les colonnes remplies à la main par les Ops.
-// ZÉRO logique dupliquée : la ligne sheet = `idAdf` + `sessionToCsvRow(s)` tel
-// quel ; les entêtes = 'idAdf' + `SESSIONS_CSV_HEADERS`. Toute évolution de colonne
-// du CSV se propage donc automatiquement à la route sheet (source unique).
-export const SESSIONS_SHEET_HEADERS = ['idAdf', ...SESSIONS_CSV_HEADERS] as const;
+// ZÉRO logique dupliquée : les colonnes du milieu = `sessionToCsvRow(s)` tel quel ;
+// toute évolution de colonne du CSV se propage automatiquement ici (source unique).
+//
+// S10.2b — « À relancer (noms) » est ajoutée EN DERNIÈRE position, APRÈS
+// `SESSIONS_CSV_HEADERS` (donc après "Lien stockage") : les index des colonnes
+// existantes du Sheet Ops ne bougent PAS. Elle est propre au format "sheet" (elle
+// n'entre pas dans le CSV cockpit, qui reste strictement inchangé) car elle exige
+// une lecture de la collection `signatures` que l'export CSV client ne fait pas.
+export const RELANCE_NOMS_HEADER = 'À relancer (noms)';
+export const SESSIONS_SHEET_HEADERS = ['idAdf', ...SESSIONS_CSV_HEADERS, RELANCE_NOMS_HEADER] as const;
 
-export function sessionToSheetRow(s: SessionDoc): string[] {
-  return [s.idAdf, ...sessionToCsvRow(s)];
+/**
+ * Cellule "À relancer (noms)" : noms pending d'UNE session, déjà dédupliqués par
+ * participant en amont (cf. route sheet). Triés alphabétiquement (`fr`, donc
+ * accents-insensible : "Émile" se range à "E"), joints par ", ". Format "Prénom NOM"
+ * tel que stocké dans `signatures.nom` — Dendreo ne fournit pas "NOM Prénom" et le
+ * miroir ne conserve pas prénom/nom séparés (cf. rapport de recon S10.2b).
+ * Aucun nom → EMPTY_DISPLAY (jamais "").
+ */
+export function relanceNomsCell(noms: readonly string[]): string {
+  if (noms.length === 0) return EMPTY_DISPLAY;
+  return [...noms].sort((a, b) => a.localeCompare(b, 'fr')).join(', ');
+}
+
+export function sessionToSheetRow(s: SessionDoc, noms: readonly string[] = []): string[] {
+  return [s.idAdf, ...sessionToCsvRow(s), relanceNomsCell(noms)];
 }
 
 // --- À RELANCER --------------------------------------------------------------

@@ -24,6 +24,11 @@ import { todayInParis } from '@/lib/time';
  * Lignes triées par `dateFin` CROISSANTE (plus anciennes d'abord ; égalité →
  * `numeroComplet` pour un ordre déterministe).
  *
+ * S10.2b — colonne "À relancer (noms)" EN DERNIÈRE position (après "Lien stockage",
+ * donc sans décaler les colonnes du Sheet Ops). Elle vaut les noms des participants
+ * ayant ≥1 attestation non signée sur CETTE session, dédupliqués par participant.
+ * Coût quota : +1 requête `signatures` (~600 docs) par miss, mise en cache à part.
+ *
  * SERVEUR uniquement (Admin SDK, même service account que le webhook). LECTURE
  * seule. Renvoie { headers, rows } — aucune donnée sensible, aucun secret loggé.
  *
@@ -52,6 +57,61 @@ const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const CACHE_TTL_MS = 60_000;
 const cache = new Map<string, { at: number; payload: SheetPayload }>();
 
+// S10.2b — cache SÉPARÉ de la map des noms pending, sous sa PROPRE clé `pending|{jour}`.
+// La liste pending est GLOBALE : elle ne dépend pas de `finFrom`. Deux appels avec des
+// `finFrom` différents (2 entrées dans `cache`) partagent donc UNE seule lecture des
+// signatures au lieu de la payer chacun. Même TTL 60s ; le jour dans la clé suit la
+// même règle que le cache payload (jamais périmé au changement de jour).
+const pendingCache = new Map<string, { at: number; byAdf: PendingByAdf }>();
+
+/** Noms pending par session, dédupliqués par participant : idAdf → (idParticipant → nom). */
+type PendingByAdf = ReadonlyMap<string, ReadonlyMap<string, string>>;
+
+function isFresh(entry: { at: number } | undefined, now: number): boolean {
+  return entry !== undefined && now - entry.at <= CACHE_TTL_MS;
+}
+
+/**
+ * UNE seule requête pour TOUS les noms à relancer : `where('status','==','pending')`.
+ * - `select(...)` → 3 champs seulement (moins de bande passante ; Firestore facture de
+ *   toute façon au document, pas au champ).
+ * - PAS de `orderBy` : un `where` sur un champ unique se sert de l'index simple
+ *   automatique. Ajouter `orderBy('sentDate')` exigerait l'index COMPOSITE de la vue
+ *   « À relancer » — inutile ici, le tri des noms se fait en mémoire (`relanceNomsCell`).
+ * - La `Map` interne est clé par `idParticipant` → elle DÉDUPLIQUE gratuitement : une
+ *   personne avec 3 attestations pending (EPP amont/aval, PI) ne compte qu'UNE fois.
+ */
+async function readPendingByAdf(): Promise<PendingByAdf> {
+  const snap = await getDb()
+    .collection('signatures')
+    .where('status', '==', 'pending')
+    .select('idAdf', 'idParticipant', 'nom')
+    .get();
+  const byAdf = new Map<string, Map<string, string>>();
+  for (const d of snap.docs) {
+    const s = d.data();
+    const idAdf = String(s.idAdf ?? '');
+    const idParticipant = String(s.idParticipant ?? '');
+    if (!idAdf || !idParticipant) continue; // non rattachable → ignoré (jamais de ligne fantôme)
+    let parSession = byAdf.get(idAdf);
+    if (!parSession) {
+      parSession = new Map<string, string>();
+      byAdf.set(idAdf, parSession);
+    }
+    parSession.set(idParticipant, String(s.nom ?? ''));
+  }
+  return byAdf;
+}
+
+async function getPendingByAdf(today: string, now: number): Promise<PendingByAdf> {
+  const key = `pending|${today}`;
+  const hit = pendingCache.get(key);
+  if (isFresh(hit, now)) return hit!.byAdf;
+  const byAdf = await readPendingByAdf();
+  pendingCache.set(key, { at: now, byAdf });
+  return byAdf;
+}
+
 /** Tri par `dateFin` CROISSANTE (jour Paris) ; égalité → `numeroComplet` (déterministe).
  *  `Array.prototype.sort` est stable (ES2019+). */
 function byDateFinThenNumero(a: SessionDoc, b: SessionDoc): number {
@@ -69,7 +129,7 @@ function byDateFinThenNumero(a: SessionDoc, b: SessionDoc): number {
  * document et le volume (2025–2026) tient en mémoire. Toutes les comparaisons se font
  * sur `dateFin.slice(0,10)` (Paris naïf, pas d'UTC). Bornes INCLUSES.
  */
-async function buildPayload(finFrom: string | null, today: string): Promise<SheetPayload> {
+async function buildPayload(finFrom: string | null, today: string, now: number): Promise<SheetPayload> {
   const snap = await getDb().collection('sessions').get();
   const sessions = snap.docs
     .map((d) => toSessionDoc(d.data()))
@@ -81,7 +141,13 @@ async function buildPayload(finFrom: string | null, today: string): Promise<Shee
       return true;
     })
     .sort(byDateFinThenNumero);
-  return { headers: [...SESSIONS_SHEET_HEADERS], rows: sessions.map(sessionToSheetRow) };
+
+  // La map pending est GLOBALE (elle couvre aussi les sessions "Échec" et futures).
+  // On la consulte donc UNIQUEMENT par l'`idAdf` des sessions RETENUES ci-dessus : une
+  // session filtrée n'a pas de ligne, donc ses noms ne peuvent pas remonter (S10.2b §3).
+  const pendingByAdf = await getPendingByAdf(today, now);
+  const rows = sessions.map((s) => sessionToSheetRow(s, [...(pendingByAdf.get(s.idAdf)?.values() ?? [])]));
+  return { headers: [...SESSIONS_SHEET_HEADERS], rows };
 }
 
 export async function GET(req: Request): Promise<Response> {
@@ -99,8 +165,8 @@ export async function GET(req: Request): Promise<Response> {
     const key = `${finFrom ?? 'all'}|${today}`;
     const now = Date.now();
     const hit = cache.get(key);
-    if (!hit || now - hit.at > CACHE_TTL_MS) {
-      cache.set(key, { at: now, payload: await buildPayload(finFrom, today) });
+    if (!isFresh(hit, now)) {
+      cache.set(key, { at: now, payload: await buildPayload(finFrom, today, now) });
     }
     return json(cache.get(key)!.payload, 200);
   } catch {
