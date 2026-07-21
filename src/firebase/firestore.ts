@@ -30,6 +30,12 @@ function assertNumber(v: unknown, name: string): asserts v is number {
 function assertNullableString(v: unknown, name: string): asserts v is string | null {
   if (v !== null && typeof v !== 'string') throw new Error(`Champ doit être string|null : ${name}`);
 }
+function assertNullableNumber(v: unknown, name: string): asserts v is number | null {
+  if (v !== null && (typeof v !== 'number' || !Number.isFinite(v))) throw new Error(`Champ doit être number|null : ${name}`);
+}
+function assertNullableBoolean(v: unknown, name: string): asserts v is boolean | null {
+  if (v !== null && typeof v !== 'boolean') throw new Error(`Champ doit être boolean|null : ${name}`);
+}
 /** String tolérante : type string exigé, mais valeur VIDE acceptée (champ "mou",
  *  non identitaire). Sert à ne jamais rejeter une session sur un champ secondaire. */
 function assertStringType(v: unknown, name: string): asserts v is string {
@@ -66,6 +72,12 @@ function validateSessionInput(s: SessionUpsertInput): void {
   assertBoolean(s.eligibleDpc, 'eligibleDpc');
   assertBoolean(s.aEpp, 'aEpp');
   assertNumber(s.totalParticipants, 'totalParticipants');
+  // S11.1 : financements (V2) + factures (V3) — champs "mous", jamais bloquants.
+  assertBoolean(s.financeurAndpc, 'financeurAndpc');
+  assertNullableNumber(s.montantAndpc, 'montantAndpc');
+  assertNullableString(s.factureDateEnvoi, 'factureDateEnvoi');
+  assertNullableNumber(s.factureMontantHt, 'factureMontantHt');
+  assertNullableString(s.factureDatePaiement, 'factureDatePaiement');
 }
 
 function validateSignatureInput(s: SignatureUpsertInput): void {
@@ -83,6 +95,8 @@ function validateSignatureInput(s: SignatureUpsertInput): void {
   assertNullableString(s.signatureDate, 'signatureDate');
   assertNullableString(s.sentDate, 'sentDate');
   assertNullableString(s.viewerUrl, 'viewerUrl');
+  assertNullableBoolean(s.financeurAndpc, 'financeurAndpc'); // S11.1 : true|false|null
+
   // cohérence statut <-> dates
   if (s.status === 'signed' && !s.signatureDate) throw new Error('Incohérence : status=signed sans signatureDate');
   if (s.status === 'pending' && !s.sentDate) throw new Error('Incohérence : status=pending sans sentDate');

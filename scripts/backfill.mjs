@@ -18,6 +18,7 @@ import { loadDendreoEnv, DENDREO } from '../src/config';
 import { DendreoClient } from '../src/dendreo/client';
 import { getSessionSignatureStatus } from '../src/dendreo/signatures';
 import { deriveEligibleDpc, deriveNumeroCompteProduit, eppConnecte, formatLabel, hasEpp, isACheval, parseHeures } from '../src/dendreo/enrich';
+import { enrichFinancement, ensureAndpcValidated } from '../src/dendreo/financement';
 import { getDb } from '../src/firebase/admin';
 import { recalcSessionCounts, upsertSession, upsertSignature } from '../src/firebase/firestore';
 
@@ -128,6 +129,13 @@ function mapSession(s) {
     eppAvalConnecte: false,
     eligibleDpc: false, // provisoire → fixé par enrichWithModules
     aEpp: false, // provisoire → fixé par enrichWithModules
+    // S11.1 : défauts sûrs → la session valide même si enrichFinancement échoue ;
+    // écrasés dans processSession par le résultat réel (cf. Object.assign).
+    financeurAndpc: false,
+    montantAndpc: null,
+    factureDateEnvoi: null,
+    factureMontantHt: null,
+    factureDatePaiement: null,
   };
 }
 
@@ -173,7 +181,7 @@ async function enrichWithModules(session) {
 }
 
 // entry = AttestationLine (dates déjà normalisées ISO|null par signatures.ts).
-function mapSig(a, session) {
+function mapSig(a, session, financeurAndpc) {
   return {
     idAdf: session.idAdf,
     idParticipant: String(a.idParticipant),
@@ -184,6 +192,7 @@ function mapSig(a, session) {
     signatureDate: a.signatureDate ?? null,
     sentDate: a.sentDate ?? null,
     viewerUrl: a.viewerUrl ?? null,
+    financeurAndpc: financeurAndpc ?? null, // S11.1 : true=ANDPC | false=autre | null=aucun
     sessionNumeroComplet: session.numeroComplet,
     sessionIntitule: session.intitule,
     sessionDateDebut: session.dateDebut,
@@ -257,12 +266,18 @@ async function processSession(session) {
     // Enrichissement modules (S5.1b) : +1 lecture Dendreo/session (lams.php?include=module).
     await enrichWithModules(session);
 
+    // Enrichissement financements/factures (S11.1) : +3 lectures RÉSILIENTES/session
+    // (financements + laps + factures). Échec → valeurs par défaut (false/null) déjà
+    // posées par mapSession → la session n'est JAMAIS perdue. MÊME fonction que sync.ts.
+    const fin = await enrichFinancement(session.idAdf, client);
+    Object.assign(session, fin.session);
+
     if (!args.dryRun) {
       try {
         await upsertSession(session); // la SESSION s'écrit TOUJOURS (avant les lignes)
         for (const a of st.attestations) {
           try {
-            await upsertSignature(mapSig(a, session));
+            await upsertSignature(mapSig(a, session, fin.financeurByParticipant.get(String(a.idParticipant)) ?? null));
           } catch (lineErr) {
             if (isQuotaError(lineErr)) throw lineErr; // quota → remonte (arrêt propre)
             ignoredLines += 1; // une ligne KO n'abat JAMAIS la session : on l'ignore + compte
@@ -346,6 +361,7 @@ function printReport(perYear, meta, floorHasData) {
 // --- main -------------------------------------------------------------------
 async function main() {
   log(`# BACKFILL S2.2 — mode=${args.dryRun ? 'DRY-RUN' : 'WRITE'}${args.year ? ' year=' + args.year : ''}${args.limit != null ? ' limit=' + args.limit : ''}${args.force ? ' force' : ''}`);
+  await ensureAndpcValidated(client); // S11.1 : valide le libellé "ANDPC" une fois (log d'alerte sinon)
   etapesMap = await fetchEtapesMap();
 
   const currentYear = new Date().getFullYear();

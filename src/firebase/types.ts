@@ -32,6 +32,12 @@ export interface SessionDoc {
   eppAvalConnecte: boolean; // module id_categorie_module=21 avec heures connectées > 0
   eligibleDpc: boolean; // eligible_dpc="1" du module cœur (S6.2)
   aEpp: boolean; // ∃ module EPP (cat 22 ou 21) dans la session
+  // --- Enrichissement S11.1 : FINANCEMENTS (V2) + FACTURES (V3) ---------------
+  financeurAndpc: boolean; // ∃ ligne financements.id_financeur=360 (ANDPC)
+  montantAndpc: number | null; // Σ montant_finance des lignes 360 UNIQUEMENT ; null si aucune
+  factureDateEnvoi: string | null; // plus ancienne date_envoi des factures id_opca=360 (jour Paris) ; null si aucune
+  factureMontantHt: number | null; // Σ montant_total_ht des factures id_opca=360 ; null si aucune
+  factureDatePaiement: string | null; // plus récente date_paiement des factures id_opca=360 (jour Paris) ; null si aucune/impayé
   counts: Counts;
   oldestPendingSentDate: string | null;
   lastSyncedAt: string;
@@ -49,6 +55,7 @@ export interface SignatureDoc {
   signatureDate: string | null;
   sentDate: string | null;
   viewerUrl: string | null;
+  financeurAndpc: boolean | null; // S11.1 : true=ANDPC(360) | false=autre financeur | null=aucun financement rattaché
   sessionNumeroComplet: string;
   sessionIntitule: string;
   sessionDateDebut: string;

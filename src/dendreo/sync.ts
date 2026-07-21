@@ -19,6 +19,7 @@ import {
   parseHeures,
   type SessionModuleView,
 } from './enrich';
+import { enrichFinancement, ensureAndpcValidated } from './financement';
 import { recalcSessionCounts, upsertSession, upsertSignature } from '../firebase/firestore';
 import type { SessionUpsertInput } from '../firebase/types';
 import type { AttestationLine } from './types';
@@ -84,7 +85,7 @@ async function fetchModules(client: DendreoClient, idAdf: string): Promise<Sessi
   return out;
 }
 
-function mapSignature(a: AttestationLine, session: SessionUpsertInput) {
+function mapSignature(a: AttestationLine, session: SessionUpsertInput, financeurAndpc: boolean | null) {
   return {
     idAdf: session.idAdf,
     idParticipant: String(a.idParticipant),
@@ -95,6 +96,7 @@ function mapSignature(a: AttestationLine, session: SessionUpsertInput) {
     signatureDate: a.signatureDate ?? null,
     sentDate: a.sentDate ?? null,
     viewerUrl: a.viewerUrl ?? null,
+    financeurAndpc, // S11.1 : chaîne idParticipant → id_entreprise → financeur
     sessionNumeroComplet: session.numeroComplet,
     sessionIntitule: session.intitule,
     sessionDateDebut: session.dateDebut,
@@ -124,6 +126,10 @@ export async function syncSession(idAdf: string, client: DendreoClient = new Den
   const dateFin = normDate(adf.date_fin);
   const modules = await fetchModules(client, id);
 
+  // S11.1 : enrichissement financements/factures (résilient) — MÊME fonction que le backfill.
+  await ensureAndpcValidated(client);
+  const fin = await enrichFinancement(id, client);
+
   const session: SessionUpsertInput = {
     idAdf: id,
     numeroComplet: String(adf.numero_complet ?? `ADF_${id}`),
@@ -143,11 +149,14 @@ export async function syncSession(idAdf: string, client: DendreoClient = new Den
     eppAvalConnecte: eppConnecte(modules, 'aval'),
     eligibleDpc: deriveEligibleDpc(modules),
     aEpp: hasEpp(modules),
+    ...fin.session,
   };
 
   const status = await getSessionSignatureStatus(id, client); // fichiers.php + règle attestation
   await upsertSession(session);
-  for (const a of status.attestations) await upsertSignature(mapSignature(a, session));
+  for (const a of status.attestations) {
+    await upsertSignature(mapSignature(a, session, fin.financeurByParticipant.get(String(a.idParticipant)) ?? null));
+  }
   await recalcSessionCounts(id);
 
   return { idAdf: id, found: true, attestations: status.attestations.length };

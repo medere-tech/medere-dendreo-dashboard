@@ -42,6 +42,11 @@ const session = (idAdf: string): SessionUpsertInput => ({
   eppAvalConnecte: false,
   eligibleDpc: true,
   aEpp: false,
+  financeurAndpc: false,
+  montantAndpc: null,
+  factureDateEnvoi: null,
+  factureMontantHt: null,
+  factureDatePaiement: null,
 });
 
 const sig = (idAdf: string, idParticipant: string, over: Partial<SignatureUpsertInput>): SignatureUpsertInput => ({
@@ -54,6 +59,7 @@ const sig = (idAdf: string, idParticipant: string, over: Partial<SignatureUpsert
   signatureDate: null,
   sentDate: '2026-03-01T00:00:00.000Z',
   viewerUrl: null,
+  financeurAndpc: null,
   sessionNumeroComplet: `ADF_${idAdf}`,
   sessionIntitule: 'Session test',
   sessionDateDebut: '2026-01-01T00:00:00.000Z',

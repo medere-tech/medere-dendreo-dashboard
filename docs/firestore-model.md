@@ -24,6 +24,13 @@ Une session de formation + son agrégat de signatures (pour la vue transverse et
   eppAvalConnecte: boolean,            // S5.1b — module id_categorie_module=21 AVEC c_nombre_dheures_connectees > 0
   eligibleDpc: boolean,                // S6.2 — eligible_dpc="1" du module CŒUR (cat ∉ {21,22})
   aEpp: boolean,                       // S6.2 — ∃ module EPP (cat 22 ou 21) dans la session
+  financeurAndpc: boolean,             // S11.1 (V2) — ∃ ligne financements.id_financeur=360 (ANDPC)
+  montantAndpc: number | null,         // S11.1 (V2) — Σ financements.montant_finance des lignes 360 UNIQUEMENT ; null si aucune
+  // V3 : agrégat des factures id_opca=360 PAYÉES uniquement (date_paiement non vide ;
+  //   une facture non payée est ignorée jusqu'à son paiement). null si aucune facture payée.
+  factureDateEnvoi: string | null,     // S11.1 (V3) — plus ANCIENNE date_envoi des factures ANDPC PAYÉES, JOUR PARIS (slice 10, jamais UTC)
+  factureMontantHt: number | null,     // S11.1 (V3) — Σ montant_total_ht des factures ANDPC PAYÉES
+  factureDatePaiement: string | null,  // S11.1 (V3) — plus RÉCENTE date_paiement des factures ANDPC PAYÉES, JOUR PARIS
   counts: {                            // cf. signature-rule.md §4
     envoyes: number,
     signes: number,
@@ -47,6 +54,8 @@ Une ligne par **attestation** (participant × session × doctype). Source de la 
   signatureDate: string | null,
   sentDate: string | null,
   viewerUrl: string | null,
+  financeurAndpc: boolean | null,      // S11.1 — true=ANDPC(360) | false=autre financeur | null=aucun financement rattaché
+                                       //   (chaîne : idParticipant → laps.id_entreprise → financements.id_finance → id_financeur)
   sessionNumeroComplet, sessionIntitule, sessionDateDebut,
   lastSyncedAt
 }
