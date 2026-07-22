@@ -14,7 +14,10 @@
     "audit:prod": "npm audit --omit=dev --audit-level=high"
   },
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=20.9.0"
+  },
+  "overrides": {
+    "sharp": ">=0.35.0"
   },
   "dependencies": {
     "firebase": "^12.15.0",
