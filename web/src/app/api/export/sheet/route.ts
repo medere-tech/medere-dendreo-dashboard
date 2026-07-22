@@ -20,6 +20,11 @@ import { todayInParis } from '@/lib/time';
  *    seule chaque jour ; ET
  *  - `?finFrom=AAAA-MM-JJ` (S10.1b, optionnel) → borne basse. Combiné :
  *    `finFrom <= dateFin <= aujourd'hui`.
+ * Filtres V2 (S11.2, optionnels, défaut = inactif → rétrocompatible) :
+ *  - `?debutFrom=AAAA-MM-JJ` → ne garde que `dateDebut >= debutFrom` (symétrique de finFrom) ;
+ *  - `?andpcOnly=1`          → ne garde que les sessions `financeurAndpc === true` ;
+ *  - `?avecCompteProduit=1`  → ne garde que celles dont `numeroCompteProduit` est non vide
+ *    (retire les formations sans audit type AFGSU).
  * Dates sur `dateFin`, jour Paris naïf `slice(0,10)`, jamais d'UTC.
  * Lignes triées par `dateFin` CROISSANTE (plus anciennes d'abord ; égalité →
  * `numeroComplet` pour un ordre déterministe).
@@ -64,8 +69,21 @@ const cache = new Map<string, { at: number; payload: SheetPayload }>();
 // même règle que le cache payload (jamais périmé au changement de jour).
 const pendingCache = new Map<string, { at: number; byAdf: PendingByAdf }>();
 
-/** Noms pending par session, dédupliqués par participant : idAdf → (idParticipant → nom). */
-type PendingByAdf = ReadonlyMap<string, ReadonlyMap<string, string>>;
+/** Info pending d'un participant : son nom d'affichage + son financeur (S11.2). */
+interface PendingInfo {
+  nom: string;
+  financeurAndpc: boolean | null; // true=ANDPC | false=autre (hors-DPC) | null=aucun financement
+}
+/** Pending par session, dédupliqué par participant : idAdf → (idParticipant → PendingInfo). */
+type PendingByAdf = ReadonlyMap<string, ReadonlyMap<string, PendingInfo>>;
+
+/** Filtres de visibilité (tous optionnels ; défauts rétrocompatibles). */
+interface Filters {
+  finFrom: string | null; // dateFin >= finFrom
+  debutFrom: string | null; // dateDebut >= debutFrom (S11.2)
+  andpcOnly: boolean; // financeurAndpc === true (S11.2)
+  avecCompteProduit: boolean; // numeroCompteProduit non vide (S11.2)
+}
 
 function isFresh(entry: { at: number } | undefined, now: number): boolean {
   return entry !== undefined && now - entry.at <= CACHE_TTL_MS;
@@ -85,9 +103,9 @@ async function readPendingByAdf(): Promise<PendingByAdf> {
   const snap = await getDb()
     .collection('signatures')
     .where('status', '==', 'pending')
-    .select('idAdf', 'idParticipant', 'nom')
+    .select('idAdf', 'idParticipant', 'nom', 'financeurAndpc') // S11.2 : +financeurAndpc
     .get();
-  const byAdf = new Map<string, Map<string, string>>();
+  const byAdf = new Map<string, Map<string, PendingInfo>>();
   for (const d of snap.docs) {
     const s = d.data();
     const idAdf = String(s.idAdf ?? '');
@@ -95,10 +113,13 @@ async function readPendingByAdf(): Promise<PendingByAdf> {
     if (!idAdf || !idParticipant) continue; // non rattachable → ignoré (jamais de ligne fantôme)
     let parSession = byAdf.get(idAdf);
     if (!parSession) {
-      parSession = new Map<string, string>();
+      parSession = new Map<string, PendingInfo>();
       byAdf.set(idAdf, parSession);
     }
-    parSession.set(idParticipant, String(s.nom ?? ''));
+    // tri-état préservé : true (ANDPC) | false (autre financeur) | null (aucun financement).
+    const f = s.financeurAndpc;
+    const financeurAndpc = f === true ? true : f === false ? false : null;
+    parSession.set(idParticipant, { nom: String(s.nom ?? ''), financeurAndpc });
   }
   return byAdf;
 }
@@ -129,7 +150,7 @@ function byDateFinThenNumero(a: SessionDoc, b: SessionDoc): number {
  * document et le volume (2025–2026) tient en mémoire. Toutes les comparaisons se font
  * sur `dateFin.slice(0,10)` (Paris naïf, pas d'UTC). Bornes INCLUSES.
  */
-async function buildPayload(finFrom: string | null, today: string, now: number): Promise<SheetPayload> {
+async function buildPayload(filters: Filters, today: string, now: number): Promise<SheetPayload> {
   const snap = await getDb().collection('sessions').get();
   const sessions = snap.docs
     .map((d) => toSessionDoc(d.data()))
@@ -137,7 +158,10 @@ async function buildPayload(finFrom: string | null, today: string, now: number):
       if (isEchecEtape(s.etape)) return false; // hors "Échec" — même règle que isCockpitVisible
       const fin = s.dateFin.slice(0, 10);
       if (fin > today) return false; // borne haute = aujourd'hui Paris (TOUJOURS)
-      if (finFrom && fin < finFrom) return false; // borne basse optionnelle
+      if (filters.finFrom && fin < filters.finFrom) return false; // borne basse dateFin
+      if (filters.debutFrom && s.dateDebut.slice(0, 10) < filters.debutFrom) return false; // borne basse dateDebut (S11.2)
+      if (filters.andpcOnly && s.financeurAndpc !== true) return false; // ANDPC uniquement (S11.2)
+      if (filters.avecCompteProduit && !(s.numeroCompteProduit && s.numeroCompteProduit.trim() !== '')) return false; // compte produit requis (S11.2)
       return true;
     })
     .sort(byDateFinThenNumero);
@@ -146,7 +170,20 @@ async function buildPayload(finFrom: string | null, today: string, now: number):
   // On la consulte donc UNIQUEMENT par l'`idAdf` des sessions RETENUES ci-dessus : une
   // session filtrée n'a pas de ligne, donc ses noms ne peuvent pas remonter (S10.2b §3).
   const pendingByAdf = await getPendingByAdf(today, now);
-  const rows = sessions.map((s) => sessionToSheetRow(s, [...(pendingByAdf.get(s.idAdf)?.values() ?? [])]));
+  const rows = sessions.map((s) => {
+    // S11.2 : parmi les pending de la session, on RELANCE financeurAndpc true|null ;
+    // les false (hors-DPC) sortent des noms et alimentent "Hors DPC (nb)".
+    const parSession = pendingByAdf.get(s.idAdf);
+    const noms: string[] = [];
+    let horsDpc = 0;
+    if (parSession) {
+      for (const info of parSession.values()) {
+        if (info.financeurAndpc === false) horsDpc += 1;
+        else noms.push(info.nom); // true (ANDPC) ou null (aucun financement) → à relancer
+      }
+    }
+    return sessionToSheetRow(s, noms, horsDpc);
+  });
   return { headers: [...SESSIONS_SHEET_HEADERS], rows };
 }
 
@@ -155,18 +192,28 @@ export async function GET(req: Request): Promise<Response> {
     return json({ error: 'unauthorized' }, 401);
   }
 
-  const finFrom = new URL(req.url).searchParams.get('finFrom');
+  const params = new URL(req.url).searchParams;
+  const finFrom = params.get('finFrom');
+  const debutFrom = params.get('debutFrom');
   if (finFrom !== null && !DATE_RE.test(finFrom)) {
     return json({ error: 'invalid finFrom (attendu AAAA-MM-JJ)' }, 400); // ne lit pas Firestore
   }
+  if (debutFrom !== null && !DATE_RE.test(debutFrom)) {
+    return json({ error: 'invalid debutFrom (attendu AAAA-MM-JJ)' }, 400); // ne lit pas Firestore
+  }
+  const andpcOnly = params.get('andpcOnly') === '1';
+  const avecCompteProduit = params.get('avecCompteProduit') === '1';
+  const filters: Filters = { finFrom, debutFrom, andpcOnly, avecCompteProduit };
 
   try {
     const today = todayInParis(); // recalculé chaque requête → jamais codé en dur
-    const key = `${finFrom ?? 'all'}|${today}`;
+    // Clé de cache = TOUS les filtres + le jour : un appel filtré ne sert jamais un cache
+    // d'un autre filtre, et le changement de jour (borne haute) invalide naturellement.
+    const key = `${finFrom ?? 'all'}|${debutFrom ?? 'all'}|${andpcOnly ? '1' : '0'}|${avecCompteProduit ? '1' : '0'}|${today}`;
     const now = Date.now();
     const hit = cache.get(key);
     if (!isFresh(hit, now)) {
-      cache.set(key, { at: now, payload: await buildPayload(finFrom, today, now) });
+      cache.set(key, { at: now, payload: await buildPayload(filters, today, now) });
     }
     return json(cache.get(key)!.payload, 200);
   } catch {

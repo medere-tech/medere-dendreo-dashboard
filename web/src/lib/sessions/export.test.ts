@@ -36,6 +36,7 @@ function session(over: Partial<SessionDoc> = {}): SessionDoc {
     intitule: 'Prévention', dateDebut: '2026-01-09T00:00:00', dateFin: '2026-02-20T23:59:59',
     idEtapeProcess: '6', etape: 'Réalisation', idCentre: '1', type: 'inter', totalParticipants: 4,
     format: 'Mixte', aCheval: false, eppAmontConnecte: false, eppAvalConnecte: false, eligibleDpc: true, aEpp: true,
+    financeurAndpc: false, montantAndpc: null, factureDateEnvoi: null, factureMontantHt: null, factureDatePaiement: null,
     counts: { envoyes: 3, signes: 1, nonSignes: 2, participantsConcernes: 3, participantsARelancer: 2 },
     oldestPendingSentDate: null, lastSyncedAt: '', source: 'dendreo',
     ...over,
@@ -104,8 +105,10 @@ describe('COCKPIT — colonnes & mapping', () => {
     expect(row[8]).toBe('✅'); // Cheval?
     expect(row[12]).toBe('2 à relancer'); // Signatures
     expect(row[15]).toBe('2/3'); // Attestation manquante (nonSignes/envoyes)
-    // colonnes Ops encore vides (15 = Attestation manquante désormais remplie)
-    expect([row[9], row[10], row[11], row[13], row[14], row[16], row[17]]).toEqual(['', '', '', '', '', '', '']);
+    // S11.2 : colonnes facture (9,10,11) désormais AUTO → EMPTY_DISPLAY ici (facture null par défaut).
+    expect([row[9], row[10], row[11]]).toEqual([EMPTY_DISPLAY, EMPTY_DISPLAY, EMPTY_DISPLAY]);
+    // colonnes Ops encore vraiment vides : Commentaire, Relance, Dendreo, Dossier.
+    expect([row[13], row[14], row[16], row[17]]).toEqual(['', '', '', '']);
     // Lien stockage (dernière colonne) = suiviSignaturesUrl, jamais reconstruit à la main
     expect(row[18]).toBe(suiviSignaturesUrl('2656'));
     expect(row[18]).toBe('https://pro.dendreo.com/nes_formation/formations/2656/suivi-signatures');
@@ -129,6 +132,21 @@ describe('COCKPIT — colonnes & mapping', () => {
     expect(row[4]).toBe('');
   });
 
+  it('S11.2 : colonnes facture AUTO remplies (Date de dépôt / Montant € / Date de paiement)', () => {
+    const row = sessionToCsvRow(session({
+      factureDateEnvoi: '2026-07-03', factureMontantHt: 1111.5, factureDatePaiement: '2026-07-20',
+    }));
+    expect(row[9]).toBe('03/07/26'); // Date de dépôt ← factureDateEnvoi
+    expect(row[10]).toBe('1111,50'); // Montant € ← factureMontantHt (virgule FR, 2 décimales)
+    expect(row[11]).toBe('20/07/26'); // Date de paiement ← factureDatePaiement
+  });
+
+  it('S11.2 : montant entier → 2 décimales virgule ; facture null → EMPTY_DISPLAY', () => {
+    expect(sessionToCsvRow(session({ factureMontantHt: 16929 }))[10]).toBe('16929,00');
+    const nul = sessionToCsvRow(session({ factureMontantHt: null, factureDateEnvoi: null, factureDatePaiement: null }));
+    expect([nul[9], nul[10], nul[11]]).toEqual([EMPTY_DISPLAY, EMPTY_DISPLAY, EMPTY_DISPLAY]);
+  });
+
   it('DPC=FALSE si non éligible ; EPP=EMPTY_DISPLAY si pas d\'EPP', () => {
     const row = sessionToCsvRow(session({ eligibleDpc: false, aEpp: false, eppAmontConnecte: true }));
     expect(row[0]).toBe('FALSE'); // DPC
@@ -144,12 +162,19 @@ describe('COCKPIT — colonnes & mapping', () => {
 });
 
 describe('COCKPIT — variante "sheet" (idAdf + réutilisation du CSV)', () => {
-  it('entêtes sheet = idAdf, puis EXACTEMENT les entêtes CSV, puis "À relancer (noms)" EN DERNIER', () => {
-    expect(SESSIONS_SHEET_HEADERS).toEqual(['idAdf', ...SESSIONS_CSV_HEADERS, 'À relancer (noms)']);
+  const CSV_LEN = SESSIONS_CSV_HEADERS.length; // 19
+
+  it('entêtes sheet = idAdf + CSV + "À relancer (noms)" + les 2 colonnes S11.2 EN FIN', () => {
+    expect(SESSIONS_SHEET_HEADERS).toEqual([
+      'idAdf', ...SESSIONS_CSV_HEADERS, 'À relancer (noms)', 'Montant session', 'Hors DPC (nb)',
+    ]);
     expect(SESSIONS_SHEET_HEADERS[0]).toBe('idAdf');
-    // Position EN DERNIER = les index des colonnes du Sheet Ops ne bougent pas (S10.2b).
-    expect(SESSIONS_SHEET_HEADERS.at(-1)).toBe('À relancer (noms)');
-    expect(SESSIONS_SHEET_HEADERS.at(-2)).toBe('Lien stockage'); // dernière colonne CSV, inchangée
+    expect(SESSIONS_SHEET_HEADERS.at(-2)).toBe('Montant session');
+    expect(SESSIONS_SHEET_HEADERS.at(-1)).toBe('Hors DPC (nb)');
+  });
+
+  it('AUCUN en-tête dupliqué dans la variante sheet (protège l\'Apps Script)', () => {
+    expect(new Set(SESSIONS_SHEET_HEADERS).size).toBe(SESSIONS_SHEET_HEADERS.length);
   });
 
   it("le CSV cockpit N'A PAS la colonne noms (propre au format sheet)", () => {
@@ -157,26 +182,39 @@ describe('COCKPIT — variante "sheet" (idAdf + réutilisation du CSV)', () => {
     expect(sessionToCsvRow(session({}))).toHaveLength(SESSIONS_CSV_HEADERS.length);
   });
 
-  it('sessionToSheetRow : idAdf en 1re colonne, colonnes du milieu == sessionToCsvRow (zéro logique dupliquée)', () => {
+  it('sessionToSheetRow : idAdf en 1re col., partie CSV == sessionToCsvRow (zéro logique dupliquée)', () => {
     const s = session({ idAdf: '2656', aCheval: true, eppAmontConnecte: true });
     const row = sessionToSheetRow(s, ['Hugo CASTAN']);
     expect(row[0]).toBe('2656'); // clé de correspondance
-    expect(row).toHaveLength(SESSIONS_SHEET_HEADERS.length); // = 1 + 19 + 1
-    // La preuve de réutilisation : entre idAdf et les noms == la ligne CSV telle quelle.
-    expect(row.slice(1, -1)).toEqual(sessionToCsvRow(s));
-    expect(row.at(-1)).toBe('Hugo CASTAN');
+    expect(row).toHaveLength(SESSIONS_SHEET_HEADERS.length); // = 1 + 19 + 1 + 2
+    // Réutilisation : la tranche CSV (après idAdf) == la ligne CSV telle quelle.
+    expect(row.slice(1, 1 + CSV_LEN)).toEqual(sessionToCsvRow(s));
+    expect(row.at(-3)).toBe('Hugo CASTAN'); // À relancer (noms)
+  });
+
+  it('sessionToSheetRow : colonnes S11.2 en fin — Montant session (virgule FR) + Hors DPC (nb)', () => {
+    const s = session({ idAdf: '2656', montantAndpc: 5168 });
+    const row = sessionToSheetRow(s, ['Hugo CASTAN'], 3);
+    expect(row.at(-2)).toBe('5168,00'); // Montant session ← montantAndpc
+    expect(row.at(-1)).toBe('3'); // Hors DPC (nb)
+  });
+
+  it('sessionToSheetRow : montantAndpc null → EMPTY_DISPLAY ; horsDpc 0 → EMPTY_DISPLAY', () => {
+    const row = sessionToSheetRow(session({ idAdf: '1', montantAndpc: null }), ['X'], 0);
+    expect(row.at(-2)).toBe(EMPTY_DISPLAY); // Montant session
+    expect(row.at(-1)).toBe(EMPTY_DISPLAY); // Hors DPC (nb) = 0
   });
 
   it('sessionToSheetRow : idAdf vide reste en 1re colonne (pas de crash, cohérent CSV)', () => {
     const s = session({ idAdf: '' });
     const row = sessionToSheetRow(s);
     expect(row[0]).toBe('');
-    expect(row.slice(1, -1)).toEqual(sessionToCsvRow(s));
+    expect(row.slice(1, 1 + CSV_LEN)).toEqual(sessionToCsvRow(s));
   });
 
-  it('sessionToSheetRow sans noms → EMPTY_DISPLAY en dernière colonne (jamais "")', () => {
-    expect(sessionToSheetRow(session({ idAdf: '1' })).at(-1)).toBe(EMPTY_DISPLAY);
-    expect(sessionToSheetRow(session({ idAdf: '1' }), []).at(-1)).toBe(EMPTY_DISPLAY);
+  it('sessionToSheetRow sans noms → EMPTY_DISPLAY dans la colonne noms (jamais "")', () => {
+    expect(sessionToSheetRow(session({ idAdf: '1' })).at(-3)).toBe(EMPTY_DISPLAY);
+    expect(sessionToSheetRow(session({ idAdf: '1' }), []).at(-3)).toBe(EMPTY_DISPLAY);
   });
 });
 

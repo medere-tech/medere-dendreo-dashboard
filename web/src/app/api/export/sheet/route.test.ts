@@ -36,7 +36,9 @@ vi.mock('@shared/firebase/admin', () => ({
 
 /** Docs signature pending BRUTS (forme miroir, champs `select`és). */
 const asPending = (raws: object[]) => ({ docs: raws.map((r) => ({ data: () => r })) });
-const pending = (idAdf: string, idParticipant: string, nom: string) => ({ idAdf, idParticipant, nom });
+// financeurAndpc optionnel : absent → traité comme null (à relancer par précaution).
+const pending = (idAdf: string, idParticipant: string, nom: string, financeurAndpc?: boolean | null) =>
+  (financeurAndpc === undefined ? { idAdf, idParticipant, nom } : { idAdf, idParticipant, nom, financeurAndpc });
 
 // « Aujourd'hui Paris » INJECTABLE (déterministe) : on ne mocke QUE todayInParis,
 // le reste de @/lib/time (parisDayOfInstant…) garde son implémentation réelle.
@@ -115,15 +117,15 @@ describe('GET /api/export/sheet', () => {
     expect(body.rows).toHaveLength(1);
   });
 
-  it('idAdf en 1re colonne ; colonnes du milieu == EXACTEMENT l\'export CSV (réutilisation prouvée)', async () => {
+  it('idAdf en 1re colonne ; tranche CSV == EXACTEMENT l\'export CSV (réutilisation prouvée)', async () => {
     const GET = await freshRoute();
     const body = await (await GET(req(`Bearer ${TOKEN}`))).json();
-    // entêtes = 'idAdf' + les entêtes CSV + la colonne noms EN DERNIER
-    expect(body.headers).toEqual(['idAdf', ...SESSIONS_CSV_HEADERS, 'À relancer (noms)']);
+    // entêtes = 'idAdf' + les entêtes CSV + noms + les 2 colonnes S11.2
+    expect(body.headers).toEqual(['idAdf', ...SESSIONS_CSV_HEADERS, 'À relancer (noms)', 'Montant session', 'Hors DPC (nb)']);
     const row = body.rows[0];
     expect(row[0]).toBe('2691'); // clé de correspondance
-    // entre idAdf et les noms == la ligne CSV normalisée telle quelle
-    expect(row.slice(1, -1)).toEqual(sessionToCsvRow(toSessionDoc(RAW_SESSION)));
+    // la tranche CSV (après idAdf) == la ligne CSV normalisée telle quelle
+    expect(row.slice(1, 1 + SESSIONS_CSV_HEADERS.length)).toEqual(sessionToCsvRow(toSessionDoc(RAW_SESSION)));
   });
 
   it('cache ~60s : 2 appels rapprochés → UNE seule lecture Firestore', async () => {
@@ -271,8 +273,10 @@ describe('GET /api/export/sheet — exclusion "Échec" (règle cockpit)', () => 
 // --- S10.2b : colonne "À relancer (noms)" -----------------------------------
 describe('GET /api/export/sheet — colonne "À relancer (noms)"', () => {
   const TODAY = '2026-07-10';
-  /** Dernière cellule (la colonne noms) de la ligne d'idAdf donné. */
-  const nomsDe = (body: { rows: string[][] }, idAdf: string) => body.rows.find((r) => r[0] === idAdf)?.at(-1);
+  /** Colonne "À relancer (noms)" = 3e en partant de la fin (…, noms, Montant session, Hors DPC). */
+  const nomsDe = (body: { rows: string[][] }, idAdf: string) => body.rows.find((r) => r[0] === idAdf)?.at(-3);
+  /** Colonne "Hors DPC (nb)" = dernière. */
+  const horsDpcDe = (body: { rows: string[][] }, idAdf: string) => body.rows.find((r) => r[0] === idAdf)?.at(-1);
   const ids = (body: { rows: string[][] }) => body.rows.map((r) => r[0]);
 
   beforeEach(() => {
@@ -286,7 +290,7 @@ describe('GET /api/export/sheet — colonne "À relancer (noms)"', () => {
     const GET = await freshRoute();
     await GET(req(`Bearer ${TOKEN}`));
     expect(whereSpy).toHaveBeenCalledWith('status', '==', 'pending');
-    expect(selectSpy).toHaveBeenCalledWith('idAdf', 'idParticipant', 'nom');
+    expect(selectSpy).toHaveBeenCalledWith('idAdf', 'idParticipant', 'nom', 'financeurAndpc'); // S11.2 : +financeurAndpc
     expect(whereSpy).toHaveBeenCalledTimes(1); // UNE seule requête, jamais une par session
   });
 
@@ -375,5 +379,155 @@ describe('GET /api/export/sheet — colonne "À relancer (noms)"', () => {
     const res = await GET(req(`Bearer ${TOKEN}`));
     expect(res.status).toBe(500);
     expect(await res.json()).toMatchObject({ error: 'export failed' });
+  });
+
+  it('S11.2 : un pending financeurAndpc===false EXCLU des noms, COMPTÉ dans "Hors DPC (nb)"', async () => {
+    getMock.mockResolvedValue(asDocs([rawWith('mix', '2026-05-10T00:00:00')]));
+    pendingGetMock.mockResolvedValue(
+      asPending([
+        pending('mix', 'p1', 'Alice ANDPC', true), // ANDPC → dans les noms
+        pending('mix', 'p2', 'Bob NULL', null), // aucun financement → dans les noms (précaution)
+        pending('mix', 'p3', 'Chloe HORSDPC', false), // hors-DPC → EXCLU des noms, +1 Hors DPC
+        pending('mix', 'p4', 'David HORSDPC', false), // hors-DPC → EXCLU, +1 Hors DPC
+      ]),
+    );
+    const GET = await freshRoute();
+    const body = await (await GET(req(`Bearer ${TOKEN}`))).json();
+    expect(nomsDe(body, 'mix')).toBe('Alice ANDPC, Bob NULL'); // tri alpha, false exclus
+    expect(horsDpcDe(body, 'mix')).toBe('2'); // les 2 false comptés
+    const dump = JSON.stringify(body);
+    expect(dump).not.toContain('Chloe HORSDPC'); // jamais dans les noms
+    expect(dump).not.toContain('David HORSDPC');
+  });
+
+  it('S11.2 : aucune pending false → "Hors DPC (nb)" = "-" (EMPTY_DISPLAY)', async () => {
+    getMock.mockResolvedValue(asDocs([rawWith('s1', '2026-05-10T00:00:00')]));
+    pendingGetMock.mockResolvedValue(asPending([pending('s1', 'p1', 'Alice ANDPC', true)]));
+    const GET = await freshRoute();
+    const body = await (await GET(req(`Bearer ${TOKEN}`))).json();
+    expect(horsDpcDe(body, 's1')).toBe(EMPTY_DISPLAY);
+  });
+});
+
+// --- S11.2 : nouvelles colonnes de valeur (Montant session) -----------------
+describe('GET /api/export/sheet — colonne "Montant session"', () => {
+  const TODAY = '2026-07-10';
+  const montantDe = (body: { rows: string[][] }, idAdf: string) => body.rows.find((r) => r[0] === idAdf)?.at(-2);
+
+  beforeEach(() => {
+    getMock.mockReset();
+    process.env.SHEET_EXPORT_TOKEN = TOKEN;
+    setToday(TODAY);
+  });
+
+  it('montantAndpc → virgule FR 2 décimales ; null → "-"', async () => {
+    getMock.mockResolvedValue(asDocs([
+      { ...rawWith('avec', '2026-05-10T00:00:00'), montantAndpc: 5168 },
+      { ...rawWith('sans', '2026-05-11T00:00:00'), montantAndpc: null },
+    ]));
+    const GET = await freshRoute();
+    const body = await (await GET(req(`Bearer ${TOKEN}`))).json();
+    expect(montantDe(body, 'avec')).toBe('5168,00');
+    expect(montantDe(body, 'sans')).toBe(EMPTY_DISPLAY);
+  });
+});
+
+// --- S11.2 : filtre debutFrom ------------------------------------------------
+describe('GET /api/export/sheet — filtre ?debutFrom', () => {
+  const TODAY = '2999-12-31'; // borne haute neutre
+  const rawDebut = (idAdf: string, dateDebut: string) => ({ ...RAW_SESSION, idAdf, dateDebut, dateFin: '2026-06-30T00:00:00' });
+  const AVANT = rawDebut('avant', '2026-01-05T00:00:00');
+  const BORNE = rawDebut('borne', '2026-03-01T00:00:00'); // == debutFrom → INCLUS
+  const APRES = rawDebut('apres', '2026-05-20T00:00:00');
+  const ids = (body: { rows: string[][] }) => body.rows.map((r) => r[0]);
+
+  beforeEach(() => {
+    getMock.mockReset();
+    getMock.mockResolvedValue(asDocs([AVANT, BORNE, APRES]));
+    process.env.SHEET_EXPORT_TOKEN = TOKEN;
+    setToday(TODAY);
+  });
+
+  it('sans debutFrom → toutes (rétrocompatible)', async () => {
+    const GET = await freshRoute();
+    const body = await (await GET(req(`Bearer ${TOKEN}`))).json();
+    expect(ids(body)).toEqual(['avant', 'borne', 'apres']);
+  });
+
+  it('debutFrom=2026-03-01 → dateDebut >= borne (borne INCLUSE)', async () => {
+    const GET = await freshRoute();
+    const body = await (await GET(req(`Bearer ${TOKEN}`, '?debutFrom=2026-03-01'))).json();
+    expect(ids(body)).toEqual(['borne', 'apres']); // 'avant' exclu
+  });
+
+  it('format debutFrom invalide → 400, ne lit PAS Firestore', async () => {
+    const GET = await freshRoute();
+    const res = await GET(req(`Bearer ${TOKEN}`, '?debutFrom=2026-3-1'));
+    expect(res.status).toBe(400);
+    expect(getMock).not.toHaveBeenCalled();
+  });
+
+  it('debutFrom + finFrom + borne haute cumulés', async () => {
+    setToday('2026-07-10');
+    // 'apres' débute le 20/05 et finit le 30/06 (avant aujourd'hui) → seul retenu.
+    const GET = await freshRoute();
+    const body = await (await GET(req(`Bearer ${TOKEN}`, '?debutFrom=2026-04-01&finFrom=2026-06-01'))).json();
+    expect(ids(body)).toEqual(['apres']);
+  });
+});
+
+// --- S11.2 : filtres andpcOnly / avecCompteProduit ---------------------------
+describe('GET /api/export/sheet — filtres andpcOnly & avecCompteProduit', () => {
+  const TODAY = '2999-12-31';
+  const ids = (body: { rows: string[][] }) => body.rows.map((r) => r[0]);
+
+  beforeEach(() => {
+    getMock.mockReset();
+    process.env.SHEET_EXPORT_TOKEN = TOKEN;
+    setToday(TODAY);
+  });
+
+  it('andpcOnly=1 → uniquement financeurAndpc===true', async () => {
+    getMock.mockResolvedValue(asDocs([
+      { ...rawWith('andpc', '2026-05-10T00:00:00'), financeurAndpc: true },
+      { ...rawWith('autre', '2026-05-11T00:00:00'), financeurAndpc: false },
+      rawWith('absent', '2026-05-12T00:00:00'), // financeurAndpc absent → false après normalisation
+    ]));
+    const GET = await freshRoute();
+    const body = await (await GET(req(`Bearer ${TOKEN}`, '?andpcOnly=1'))).json();
+    expect(ids(body)).toEqual(['andpc']);
+  });
+
+  it('andpcOnly absent → rétrocompatible (toutes)', async () => {
+    getMock.mockResolvedValue(asDocs([
+      { ...rawWith('andpc', '2026-05-10T00:00:00'), financeurAndpc: true },
+      { ...rawWith('autre', '2026-05-11T00:00:00'), financeurAndpc: false },
+    ]));
+    const GET = await freshRoute();
+    const body = await (await GET(req(`Bearer ${TOKEN}`))).json();
+    expect(ids(body)).toEqual(['andpc', 'autre']);
+  });
+
+  it('avecCompteProduit=1 → retire numeroCompteProduit vide/null', async () => {
+    getMock.mockResolvedValue(asDocs([
+      { ...rawWith('cp', '2026-05-10T00:00:00'), numeroCompteProduit: '92622525478' },
+      { ...rawWith('vide', '2026-05-11T00:00:00'), numeroCompteProduit: '' },
+      { ...rawWith('nul', '2026-05-12T00:00:00'), numeroCompteProduit: null },
+    ]));
+    const GET = await freshRoute();
+    const body = await (await GET(req(`Bearer ${TOKEN}`, '?avecCompteProduit=1'))).json();
+    expect(ids(body)).toEqual(['cp']);
+  });
+
+  it('cache PAR CLÉ COMPLÈTE : filtres distincts → lectures distinctes ; répétition → cache', async () => {
+    getMock.mockResolvedValue(asDocs([{ ...rawWith('s1', '2026-05-10T00:00:00'), financeurAndpc: true, numeroCompteProduit: 'x' }]));
+    const GET = await freshRoute();
+    await GET(req(`Bearer ${TOKEN}`)); // clé de base
+    await GET(req(`Bearer ${TOKEN}`, '?andpcOnly=1')); // clé ≠
+    await GET(req(`Bearer ${TOKEN}`, '?avecCompteProduit=1')); // clé ≠
+    await GET(req(`Bearer ${TOKEN}`, '?debutFrom=2026-01-01')); // clé ≠
+    expect(getMock).toHaveBeenCalledTimes(4);
+    await GET(req(`Bearer ${TOKEN}`, '?andpcOnly=1')); // re-servi par le cache
+    expect(getMock).toHaveBeenCalledTimes(4);
   });
 });

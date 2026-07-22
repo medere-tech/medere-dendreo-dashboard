@@ -23,6 +23,19 @@ export function ddmmyyFromInstant(instant: string | null | undefined): string {
   return ddmmyy(parisDayOfInstant(instant));
 }
 
+/** Date session → "JJ/MM/AA" ; null/vide → EMPTY_DISPLAY. Pour les colonnes DONNÉES
+ *  (facture) — contrairement à `ddmmyy` (Début/Fin, toujours présentes → "" si vide). */
+export function ddmmyyOrDash(iso: string | null | undefined): string {
+  const v = ddmmyy(iso);
+  return v === '' ? EMPTY_DISPLAY : v;
+}
+
+/** Montant → "1234,50" (virgule FR, 2 décimales, sans séparateur de milliers ni symbole) :
+ *  le Sheet FR l'interprète comme un NOMBRE (un point resterait du texte). null → EMPTY_DISPLAY. */
+export function montantFr(n: number | null | undefined): string {
+  return typeof n === 'number' && Number.isFinite(n) ? n.toFixed(2).replace('.', ',') : EMPTY_DISPLAY;
+}
+
 /**
  * EPP CO/NC (S6.2) : EMPTY_DISPLAY si la session n'a AUCUN module EPP (`aEpp=false`),
  * sinon `{amont}/{aval}` avec CO = connecté (heures connectées > 0), NC = non connecté.
@@ -67,9 +80,9 @@ export function sessionToCsvRow(s: SessionDoc): string[] {
     ddmmyy(s.dateFin),
     eppCoNc(s),
     s.aCheval ? '✅' : '❌',
-    '', // Date de dépôt   (Ops)
-    '', // Montant €       (Ops)
-    '', // Date de paiement(Ops)
+    ddmmyyOrDash(s.factureDateEnvoi), // Date de dépôt    ← factureDateEnvoi (S11.2, auto)
+    montantFr(s.factureMontantHt), // Montant €        ← factureMontantHt (S11.2, auto, virgule FR)
+    ddmmyyOrDash(s.factureDatePaiement), // Date de paiement ← factureDatePaiement (S11.2, auto)
     signaturesSummary(c),
     '', // Commentaire     (Ops)
     '', // Relance         (Ops)
@@ -97,7 +110,11 @@ export function sessionsToCsv(rows: readonly SessionDoc[]): string {
 // n'entre pas dans le CSV cockpit, qui reste strictement inchangé) car elle exige
 // une lecture de la collection `signatures` que l'export CSV client ne fait pas.
 export const RELANCE_NOMS_HEADER = 'À relancer (noms)';
-export const SESSIONS_SHEET_HEADERS = ['idAdf', ...SESSIONS_CSV_HEADERS, RELANCE_NOMS_HEADER] as const;
+// S11.2 — 2 colonnes ajoutées EN FIN (après les noms). Les données facture (dépôt,
+// montant facturé, paiement) remplissent les colonnes CSV EXISTANTES (Date de dépôt /
+// Montant € / Date de paiement, cf. sessionToCsvRow) → aucun en-tête dupliqué ici.
+export const V2_SHEET_HEADERS = ['Montant session', 'Hors DPC (nb)'] as const;
+export const SESSIONS_SHEET_HEADERS = ['idAdf', ...SESSIONS_CSV_HEADERS, RELANCE_NOMS_HEADER, ...V2_SHEET_HEADERS] as const;
 
 /**
  * Cellule "À relancer (noms)" : noms pending d'UNE session, déjà dédupliqués par
@@ -112,8 +129,20 @@ export function relanceNomsCell(noms: readonly string[]): string {
   return [...noms].sort((a, b) => a.localeCompare(b, 'fr')).join(', ');
 }
 
-export function sessionToSheetRow(s: SessionDoc, noms: readonly string[] = []): string[] {
-  return [s.idAdf, ...sessionToCsvRow(s), relanceNomsCell(noms)];
+/**
+ * Ligne "sheet" : idAdf + ligne CSV cockpit + "À relancer (noms)" + les 2 colonnes S11.2.
+ *  - `noms`         : participants pending À RELANCER (financeurAndpc true|null), déjà filtrés/dédup en amont.
+ *  - `horsDpcCount` : nb de participants pending financeurAndpc===false (hors-DPC → non relancés). 0 → EMPTY_DISPLAY.
+ * "Montant session" = montantAndpc (Σ financements 360) ; distinct de "Montant €" = montant FACTURÉ.
+ */
+export function sessionToSheetRow(s: SessionDoc, noms: readonly string[] = [], horsDpcCount = 0): string[] {
+  return [
+    s.idAdf,
+    ...sessionToCsvRow(s),
+    relanceNomsCell(noms),
+    montantFr(s.montantAndpc), // Montant session
+    horsDpcCount > 0 ? String(horsDpcCount) : EMPTY_DISPLAY, // Hors DPC (nb)
+  ];
 }
 
 // --- À RELANCER --------------------------------------------------------------

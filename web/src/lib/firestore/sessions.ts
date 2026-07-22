@@ -38,6 +38,12 @@ export interface SessionDoc {
   eppAvalConnecte: boolean; // module EPP aval (cat 21) avec heures connectées > 0
   eligibleDpc: boolean; // eligible_dpc="1" du module cœur — S6.2
   aEpp: boolean; // ∃ module EPP (cat 22 ou 21)
+  // --- Enrichissement S11.1 : financements (V2) + factures (V3) --------------
+  financeurAndpc: boolean; // ∃ financement id_financeur=360 (ANDPC)
+  montantAndpc: number | null; // Σ montant_finance des lignes 360 ; null si aucune
+  factureDateEnvoi: string | null; // plus ancienne date_envoi des factures ANDPC PAYÉES (jour Paris)
+  factureMontantHt: number | null; // Σ montant_total_ht des factures ANDPC PAYÉES
+  factureDatePaiement: string | null; // plus récente date_paiement des factures ANDPC PAYÉES (jour Paris)
   counts: Counts;
   oldestPendingSentDate: string | null;
   lastSyncedAt: string;
@@ -59,8 +65,10 @@ export const EMPTY_COUNTS: Counts = {
 // ni crasher ni fausser : un doc incomplet est normalisé (0 partout, null-safe).
 const asStr = (v: unknown, fallback = ''): string => (typeof v === 'string' ? v : fallback);
 const asNullableStr = (v: unknown): string | null => (typeof v === 'string' ? v : null);
+const asNullableNum = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null);
 const asNum = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
 const asBool = (v: unknown): boolean => v === true; // défaut false pour un doc pré-S5.1b
+const asTriBool = (v: unknown): boolean | null => (v === true ? true : v === false ? false : null); // S11.1 financeurAndpc
 
 function normalizeCounts(raw: unknown): Counts {
   const c = (raw ?? {}) as Partial<Record<keyof Counts, unknown>>;
@@ -99,6 +107,11 @@ export function toSessionDoc(raw: DocumentData): SessionDoc {
     eppAvalConnecte: asBool(raw.eppAvalConnecte),
     eligibleDpc: asBool(raw.eligibleDpc),
     aEpp: asBool(raw.aEpp),
+    financeurAndpc: asBool(raw.financeurAndpc),
+    montantAndpc: asNullableNum(raw.montantAndpc),
+    factureDateEnvoi: asNullableStr(raw.factureDateEnvoi),
+    factureMontantHt: asNullableNum(raw.factureMontantHt),
+    factureDatePaiement: asNullableStr(raw.factureDatePaiement),
     counts: normalizeCounts(raw.counts),
     oldestPendingSentDate: asNullableStr(raw.oldestPendingSentDate),
     lastSyncedAt: asStr(raw.lastSyncedAt),
@@ -119,6 +132,7 @@ export interface SignatureDoc {
   signatureDate: string | null;
   sentDate: string | null;
   viewerUrl: string | null;
+  financeurAndpc: boolean | null; // S11.1 : true=ANDPC | false=autre financeur | null=aucun
   sessionNumeroComplet: string;
   sessionIntitule: string;
   sessionDateDebut: string;
@@ -138,6 +152,7 @@ export function toSignatureDoc(raw: DocumentData): SignatureDoc {
     signatureDate: asNullableStr(raw.signatureDate),
     sentDate: asNullableStr(raw.sentDate),
     viewerUrl: asNullableStr(raw.viewerUrl),
+    financeurAndpc: asTriBool(raw.financeurAndpc),
     sessionNumeroComplet: asStr(raw.sessionNumeroComplet),
     sessionIntitule: asStr(raw.sessionIntitule),
     sessionDateDebut: asStr(raw.sessionDateDebut),
