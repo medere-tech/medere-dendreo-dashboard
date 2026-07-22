@@ -5,14 +5,19 @@
 > supposée : les termes sont expliqués au fil du texte, et un glossaire figure à la fin.
 >
 > **En cas de problème urgent :** va directement à la section [7. Pannes courantes](#7-pannes-courantes--que-faire).
+>
+> **Révision :** ce runbook couvre l'outil complet, y compris l'automatisation du **Google Sheet**
+> (section 3bis) et les données de **financement / facturation ANDPC** (V2/V3) alimentées par le
+> cron nocturne.
 
----
+=================================================================================================
 
 ## Sommaire
 
 1. [À quoi sert l'outil (en une page)](#1-à-quoi-sert-loutil-en-une-page)
 2. [Comment il est construit (vue d'ensemble)](#2-comment-il-est-construit-vue-densemble)
 3. [Comment les données se mettent à jour — le cœur](#3-comment-les-données-se-mettent-à-jour--le-cœur)
+3bis. [Le Google Sheet automatisé (pour le pôle Ops)](#3bis-le-google-sheet-automatisé-pour-le-pôle-ops)
 4. [Les comptes et accès (qui possède quoi)](#4-les-comptes-et-accès-qui-possède-quoi)
 5. [Où surveiller que tout va bien](#5-où-surveiller-que-tout-va-bien)
 6. [Les règles métier à connaître](#6-les-règles-métier-à-connaître)
@@ -21,7 +26,7 @@
 9. [Les secrets et comment les renouveler](#9-les-secrets-et-comment-les-renouveler)
 10. [Glossaire](#10-glossaire)
 
----
+=================================================================================================
 
 ## 1. À quoi sert l'outil (en une page)
 
@@ -46,7 +51,7 @@ il lit, il affiche. Les relances elles-mêmes se font dans Dendreo (via le bouto
 **Adresse de l'outil :** `https://medere-dendreo-dashboard.vercel.app`
 **Accès :** connexion Google réservée aux comptes **@medere.fr** (tout autre compte est refusé).
 
----
+=================================================================================================
 
 ## 2. Comment il est construit (vue d'ensemble)
 
@@ -76,7 +81,7 @@ Trois briques, à retenir simplement :
 
 **Le code** vit dans un seul dépôt GitHub : `medere-tech/medere-dendreo-dashboard`.
 
----
+=================================================================================================
 
 ## 3. Comment les données se mettent à jour — le cœur
 
@@ -107,6 +112,12 @@ qui rattrape ce que le webhook ne voit pas (les envois, les sessions sans activi
 - **Pérenne par construction :** les années sont **calculées automatiquement** à partir de la date
   du jour. En 2028, il traitera 2027 et 2028 tout seul. **Aucune année n'est écrite « en dur »**
   (sauf la borne de départ, voir 3.3).
+- **Ce que le cron met à jour, en plus des signatures :** depuis les évolutions V2/V3, chaque
+  session lit aussi ses **financements** et ses **factures** dans Dendreo. C'est ce qui alimente,
+  dans le Google Sheet, le montant de session, les colonnes de facturation (dépôt, montant, paiement)
+  et le repérage des financements hors DPC. Ces informations ne se rafraîchissent donc **qu'une fois
+  par nuit** (le webhook, lui, ne réagit qu'aux signatures) — un délai sans conséquence, la
+  facturation évoluant sur des semaines.
 
 ### 3.3 Le cron mensuel — réconciliation complète
 
@@ -130,7 +141,67 @@ jusqu'à l'année en cours** — une vérification plus large, ceinture et brete
 **Conclusion : l'outil se tient à jour tout seul.** Un backfill manuel n'est nécessaire que dans
 des cas exceptionnels (voir [section 8](#8-opérations-manuelles)).
 
----
+=================================================================================================
+
+## 3bis. Le Google Sheet automatisé (pour le pôle Ops)
+
+En plus du dashboard web, l'outil alimente un **Google Sheet** que le pôle Ops utilise pour suivre
+les relances et la facturation ANDPC. C'est une brique à part, à comprendre séparément.
+
+### À quoi il sert
+Le Sheet reprend les mêmes données que le dashboard, mais dans un tableur que les Ops peuvent
+annoter. Il ajoute des colonnes propres à leur travail : les **noms des personnes à relancer**, le
+**montant de session ANDPC**, les **informations de facturation** (date de dépôt, montant facturé,
+date de paiement) et un compteur **« Hors DPC (nb) »** (personnes non signées qu'il ne faut pas
+relancer car financées hors ANDPC).
+
+### Comment il se remplit — sans jamais écraser le travail des Ops
+Un script (« Apps Script ») vit **dans le Google Sheet**. Il appelle une route de l'outil
+(`/api/export/sheet`) qui lui renvoie les données déjà calculées, et il met à jour la feuille.
+Deux garanties importantes :
+- **Il met à jour les lignes en place**, en reconnaissant chaque session par son identifiant
+  `idAdf` (1ʳᵉ colonne). Il ne réécrit **que les colonnes automatiques** ; les colonnes que les Ops
+  remplissent à la main (commentaires, relances, dossier…) ne sont **jamais** touchées.
+- Une session qui disparaît de l'outil n'est **jamais supprimée** de la feuille (elle peut contenir
+  du travail Ops).
+
+### Comment il se déclenche
+- **Automatiquement, toutes les heures de 8 h à 19 h** (heure de Paris), via un déclencheur Apps
+  Script (fonction `actualiserAuto`). En dehors de cette plage, il ne fait rien (économie de quota).
+- **Manuellement**, à tout moment, via le menu **« Médéré → Actualiser »** dans le Sheet.
+
+### Ce qu'un Ops voit comme « vide » — et pourquoi c'est normal
+Les colonnes de **facturation** (date de dépôt, montant facturé, date de paiement) restent **vides
+tant que la session n'a pas été facturée / payée** dans Dendreo. Une session récente qui vient de
+se terminer n'en est pas encore à l'étape facture : ses colonnes se rempliront **progressivement**,
+au fil des semaines, à mesure que les factures sont émises et payées. « Vide » veut donc dire « pas
+encore facturé », pas « donnée manquante ».
+
+### Le périmètre du Sheet
+Le Sheet ne montre que les sessions **débutant à partir du 01/01/2026**, **terminées** (fin ≤
+aujourd'hui), **financées par l'ANDPC**, et disposant d'un **numéro de compte produit**. Ce
+périmètre est fixé par les paramètres d'appel dans le script (`DEBUT_FROM`, `andpcOnly`,
+`avecCompteProduit`).
+
+### Pannes possibles côté Sheet
+- **« Jeton non configuré »** au clic sur Actualiser → le jeton d'accès n'est pas (ou plus) enregistré.
+  Menu **Médéré → Configurer le jeton d'accès**, coller le jeton (`SHEET_EXPORT_TOKEN`, voir
+  [section 9](#9-les-secrets-et-comment-les-renouveler)).
+- **« Accès refusé (401) »** → le jeton du Sheet ne correspond plus à celui de l'outil (Vercel).
+  Reconfigurer le jeton dans le Sheet avec la valeur exacte de la variable `SHEET_EXPORT_TOKEN`.
+- **Une nouvelle colonne n'apparaît pas** → le script ne crée pas les colonnes tout seul : il faut
+  ajouter l'en-tête **à la main** dans la 1ʳᵉ ligne (au caractère près), puis l'ajouter à la liste
+  `COLONNES_AUTO` du script, puis Actualiser.
+- **Vérifier que l'automatique tourne** : dans l'éditeur Apps Script → icône Déclencheurs →
+  onglet « Exécutions » : chaque run horaire doit être « Terminé ». Un « Échec » répété se diagnostique
+  là (souvent un jeton expiré).
+
+### Où se trouve le code du Sheet
+Le script Apps Script vit **dans le Google Sheet lui-même** (Extensions → Apps Script), pas dans le
+dépôt GitHub. Une copie de référence est conservée dans le dépôt (`apps-script/Medere-Sync.gs`) pour
+la passation. La route côté outil, elle, est dans le dépôt : `web/src/app/api/export/sheet/route.ts`.
+
+=================================================================================================
 
 ## 4. Les comptes et accès (qui possède quoi)
 
@@ -148,7 +219,7 @@ Pour que l'outil vive indépendamment d'une personne, ces accès doivent apparte
 > **Recommandation :** s'assurer qu'au moins **deux personnes** de Médéré sont administratrices de
 > chaque service. C'est la vraie garantie de continuité — plus que le fait qu'un compte reste ouvert.
 
----
+=================================================================================================
 
 ## 5. Où surveiller que tout va bien
 
@@ -168,7 +239,7 @@ Firebase → projet → **Firestore Database → Usage**. Le plan gratuit (« Sp
 écritures et 50 000 lectures par jour**. En usage normal, on est loin du plafond. Si le dashboard
 affiche « Données temporairement indisponibles », c'est probablement le quota (voir section 7).
 
----
+=================================================================================================
 
 ## 6. Les règles métier à connaître
 
@@ -190,11 +261,33 @@ données réelles et avec Justine.
 - **La vue « À relancer »** couvre **toutes les sessions (même en cours) sauf les « Échec »** —
   parce qu'une attestation peut partir dès la fin d'un module, avant la fin de la session.
 
----
+### Règles propres au Google Sheet (financement et facturation ANDPC)
+Ces règles ne concernent que le Google Sheet, pas le dashboard web.
+- **ANDPC** = le financeur identifié dans Dendreo par l'identifiant `360`, confirmé par son libellé
+  exact « ANDPC » (l'outil valide le libellé, pas seulement l'identifiant, par prudence).
+- **Montant de session** = la somme des montants HT des financements ANDPC de la session
+  (les financements d'autres origines — particulier, employeur, autre organisme — sont exclus).
+- **Colonnes de facturation** = elles ne comptent que les **factures ANDPC payées** (celles ayant
+  une date de paiement). Une facture non payée est ignorée jusqu'à son paiement. S'il y a plusieurs
+  factures payées : le montant est leur somme, la date de dépôt est la plus ancienne, la date de
+  paiement la plus récente.
+- **« Hors DPC (nb) »** = le nombre de personnes non signées de la session dont le financement
+  **n'est pas** l'ANDPC. Ces personnes sont **retirées** de la colonne des noms à relancer (inutile
+  de les relancer) et comptées ici à la place. Une personne sans aucun financement rattaché reste,
+  par prudence, dans les noms à relancer.
+- **Lien personne ↔ financement** : l'outil relie chaque participant à son financement via son
+  inscription (la chaîne technique est participant → inscription → entreprise de facturation →
+  financement → financeur). C'est ce qui permet de savoir, personne par personne, qui est financé
+  par l'ANDPC.
+
+=================================================================================================
 
 ## 7. Pannes courantes → que faire
 
 Format : **symptôme → cause probable → action**. Commence toujours par identifier le symptôme exact.
+
+> Pour les pannes spécifiques au **Google Sheet** (jeton, 401, colonne manquante, déclencheur
+> automatique), voir la section [3bis](#3bis-le-google-sheet-automatisé-pour-le-pôle-ops).
 
 ### 🔴 Le dashboard affiche « Données temporairement indisponibles » / une page d'erreur
 - **Cause la plus probable :** quota Firestore (lectures) épuisé pour la journée.
@@ -235,7 +328,7 @@ Format : **symptôme → cause probable → action**. Commence toujours par iden
   mais des compteurs peuvent être à zéro temporairement. → Relancer un backfill complet (section 8)
   remet tout d'aplomb.
 
----
+=================================================================================================
 
 ## 8. Opérations manuelles
 
@@ -263,7 +356,7 @@ Si le miroir est corrompu, on peut le vider et le reconstruire depuis Dendreo (a
 source de vérité est Dendreo). Voir `scripts/clear-mirror.mjs` (protégé : ne supprime rien sans
 l'option `--confirm`). **À faire par un développeur, avec précaution.**
 
----
+=================================================================================================
 
 ## 9. Les secrets et comment les renouveler
 
@@ -275,6 +368,7 @@ ne doivent **jamais** apparaître dans le code, dans une capture d'écran, ni da
 | `DENDREO_API_KEY` | Lire Dendreo | Vercel **et** GitHub |
 | `DENDREO_BASE_URL` | Adresse de l'API Dendreo | Vercel **et** GitHub |
 | `DENDREO_WEBHOOK_SECRET` | Vérifier le webhook | **Vercel uniquement** |
+| `SHEET_EXPORT_TOKEN` | Autoriser le Google Sheet à lire l'outil | **Vercel** + **dans le Google Sheet** (Propriétés du script) |
 | `FIREBASE_PROJECT_ID` | Écrire dans le miroir | Vercel **et** GitHub |
 | `FIREBASE_CLIENT_EMAIL` | Écrire dans le miroir | Vercel **et** GitHub |
 | `FIREBASE_PRIVATE_KEY` | Écrire dans le miroir | Vercel **et** GitHub |
@@ -298,7 +392,17 @@ ne doivent **jamais** apparaître dans le code, dans une capture d'écran, ni da
 3. **Redéployer** le site (Vercel → Deployments → dernier → « … » → Redeploy).
 4. Tester : Dendreo → « Tester ce Webhook » → doit renvoyer **200**.
 
----
+### Renouveler le jeton du Google Sheet (`SHEET_EXPORT_TOKEN`)
+Ce jeton autorise le Google Sheet à lire les données de l'outil. C'est un secret **à faible
+privilège** (lecture seule, révocable). Il doit être **identique** aux deux endroits.
+1. Générer une nouvelle chaîne aléatoire longue (48 caractères, lettres + chiffres).
+2. Vercel → variable `SHEET_EXPORT_TOKEN` → **Edit** → coller la nouvelle valeur → Save → **Redéployer**.
+3. Dans le Google Sheet → menu **Médéré → Configurer le jeton d'accès** → coller la **même** valeur.
+4. Tester : menu **Médéré → Actualiser** → doit se terminer sans « Accès refusé (401) ».
+> Tant que les deux valeurs ne sont pas identiques, le Sheet renvoie 401 : c'est le comportement de
+> sécurité normal (l'outil refuse tout jeton qui ne correspond pas).
+
+=================================================================================================
 
 ## 10. Glossaire
 
@@ -320,19 +424,29 @@ ne doivent **jamais** apparaître dans le code, dans une capture d'écran, ni da
   peut donner lieu à une attestation distincte.
 - **Session « Échec »** — une session non tenue/annulée dans Dendreo ; exclue de l'outil.
 - **À cheval** — une session qui commence une année et se termine l'année suivante.
+- **ANDPC** — l'Agence nationale du DPC, principal financeur des formations ; identifiée dans
+  Dendreo par l'identifiant `360` et le libellé « ANDPC ».
+- **Financement** — la prise en charge financière d'un participant (par l'ANDPC, un employeur, ou
+  le participant lui-même) ; sert au montant de session et au repérage « hors DPC » dans le Sheet.
+- **Facture** — le document de facturation d'une session ; le Sheet n'en retient que les factures
+  ANDPC payées (date de dépôt, montant, date de paiement).
+- **Apps Script** — le petit programme Google qui vit dans le Google Sheet et le remplit depuis
+  l'outil (menu « Médéré », déclencheur automatique).
 - **Quota Firestore** — les limites gratuites du plan Firebase (20 000 écritures / 50 000 lectures
   par jour).
 
----
+=================================================================================================
 
 ### Documents techniques associés (dans le dépôt, dossier `docs/`)
 - `signature-rule.md` — la règle exacte de ce qui compte comme attestation (fait autorité).
-- `firestore-model.md` — la structure des données du miroir.
+- `firestore-model.md` — la structure des données du miroir (dont les champs financement/facture).
 - `architecture.md` — l'architecture technique détaillée.
 - `webhook-recon.md` — le fonctionnement du webhook Dendreo.
+- `sprint-10-faisabilite-sheets.md` — pourquoi et comment le Google Sheet est alimenté (Option C).
 - `ui-spec.md`, `design-system.md` — l'interface et la charte visuelle.
+- `apps-script/Medere-Sync.gs` (à la racine du dépôt) — copie de référence du script du Google Sheet.
 
----
+=================================================================================================
 
 *Ce runbook décrit le fonctionnement de l'outil au moment de sa rédaction. Si l'architecture évolue
 (nouveaux crons, changement d'hébergeur, etc.), pense à le mettre à jour — c'est le document que
