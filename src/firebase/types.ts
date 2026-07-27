@@ -32,6 +32,8 @@ export interface SessionDoc {
   eppAvalConnecte: boolean; // module id_categorie_module=21 avec heures connectées > 0
   eligibleDpc: boolean; // eligible_dpc="1" du module cœur (S6.2)
   aEpp: boolean; // ∃ module EPP (cat 22 ou 21) dans la session
+  // --- Enrichissement S12.1 : dates des séances synchrones -------------------
+  datesSynchrones: string[]; // jours ISO "AAAA-MM-JJ" des créneaux des LAM elearning_sync, dédupliqués + triés ; [] si aucun
   // --- Enrichissement S11.1 : FINANCEMENTS (V2) + FACTURES (V3) ---------------
   financeurAndpc: boolean; // ∃ ligne financements.id_financeur=360 (ANDPC)
   montantAndpc: number | null; // Σ montant_finance des lignes 360 UNIQUEMENT ; null si aucune

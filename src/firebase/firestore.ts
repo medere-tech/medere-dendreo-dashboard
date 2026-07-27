@@ -44,6 +44,10 @@ function assertStringType(v: unknown, name: string): asserts v is string {
 function assertBoolean(v: unknown, name: string): asserts v is boolean {
   if (typeof v !== 'boolean') throw new Error(`Champ doit être un booléen : ${name}`);
 }
+/** Tableau de strings (défensif) : type array exigé, chaque élément string. Vide [] toléré. */
+function assertStringArray(v: unknown, name: string): asserts v is string[] {
+  if (!Array.isArray(v) || v.some((x) => typeof x !== 'string')) throw new Error(`Champ doit être string[] : ${name}`);
+}
 function assertStatus(v: unknown): asserts v is SignatureStatus {
   if (typeof v !== 'string' || !STATUSES.includes(v as SignatureStatus)) throw new Error(`status invalide (attendu signed|pending) : ${String(v)}`);
 }
@@ -71,6 +75,7 @@ function validateSessionInput(s: SessionUpsertInput): void {
   assertBoolean(s.eppAvalConnecte, 'eppAvalConnecte');
   assertBoolean(s.eligibleDpc, 'eligibleDpc');
   assertBoolean(s.aEpp, 'aEpp');
+  assertStringArray(s.datesSynchrones, 'datesSynchrones'); // S12.1 : [] toléré, jamais bloquant
   assertNumber(s.totalParticipants, 'totalParticipants');
   // S11.1 : financements (V2) + factures (V3) — champs "mous", jamais bloquants.
   assertBoolean(s.financeurAndpc, 'financeurAndpc');

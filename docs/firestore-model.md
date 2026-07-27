@@ -24,6 +24,7 @@ Une session de formation + son agrégat de signatures (pour la vue transverse et
   eppAvalConnecte: boolean,            // S5.1b — module id_categorie_module=21 AVEC c_nombre_dheures_connectees > 0
   eligibleDpc: boolean,                // S6.2 — eligible_dpc="1" du module CŒUR (cat ∉ {21,22})
   aEpp: boolean,                       // S6.2 — ∃ module EPP (cat 22 ou 21) dans la session
+  datesSynchrones: string[],           // S12.1 — jours ISO "AAAA-MM-JJ" (jour Paris NAÏF, cf. §6 cas A) des créneaux des LAM elearning_sync, dédupliqués + triés croissant ; [] si aucune séance synchrone. Faits bruts : PAS de filtre format ici (filtrage CV/Mixte à l'affichage, S12.2)
   financeurAndpc: boolean,             // S11.1 (V2) — ∃ ligne financements.id_financeur=360 (ANDPC)
   montantAndpc: number | null,         // S11.1 (V2) — Σ financements.montant_finance des lignes 360 UNIQUEMENT ; null si aucune
   // V3 : agrégat des factures id_opca=360 PAYÉES uniquement (date_paiement non vide ;
@@ -90,7 +91,7 @@ Déclarés dans `firestore.indexes.json` :
 - **Clés déterministes** : `sessions/{idAdf}`, `signatures/{idAdf}_{idParticipant}_{doctypeId}`.
 - Rejouer le backfill, recevoir un webhook, ou relancer la sync → **met à jour le même doc** sans doublon. Last-write-wins.
 - `counts` et `oldestPendingSentDate` de la session sont **recalculés** à chaque sync de la session (dérivés des `signatures` de cette session).
-- **Enrichissement S5.1b/S6.2** (`format`, `aCheval`, `eppAmontConnecte`, `eppAvalConnecte`, `eligibleDpc`, `aEpp`, `numeroCompteProduit` corrigé) : `format`/`aCheval` sont dérivés de l'ADF seul ; les booléens EPP, `eligibleDpc`, `aEpp` et la correction `numeroCompteProduit` viennent des **modules** via **1 lecture / session** — `lams.php?id_action_de_formation={id}&include=module` (porte `id_categorie_module`, `c_nombre_dheures_connectees`, `num_programme_dpc`, `eligible_dpc`). Logique pure et testée : `src/dendreo/enrich.ts`. Une lecture module KO n'empêche pas l'écriture de la session (valeurs ADF-only conservées).
+- **Enrichissement S5.1b/S6.2/S12.1** (`format`, `aCheval`, `eppAmontConnecte`, `eppAvalConnecte`, `eligibleDpc`, `aEpp`, `datesSynchrones`, `numeroCompteProduit` corrigé) : `format`/`aCheval` sont dérivés de l'ADF seul ; les booléens EPP, `eligibleDpc`, `aEpp`, `datesSynchrones` et la correction `numeroCompteProduit` viennent des **LAM** via **1 lecture / session** — `lams.php?id_action_de_formation={id}&include=module,creneaux` (porte `id_categorie_module`, `c_nombre_dheures_connectees`, `num_programme_dpc`, `eligible_dpc`, et les `creneaux` datés — champ `day`). **`include=creneaux` est GRATUIT** : même requête, aucune lecture Dendreo supplémentaire (S12.0). Logique pure et testée : `src/dendreo/enrich.ts` (`extractDatesSynchrones`, partagée backfill + sync). Une lecture LAM KO n'empêche pas l'écriture de la session (valeurs ADF-only conservées ; `datesSynchrones` reste `[]`).
 - Suppression de lignes obsolètes (un doc qui disparaîtrait côté Dendreo) : **backlog** (rare ; on traite plus tard, pas en S2).
 
 ## 6. Format des dates (anti-bug fuseau) — DEUX cas distincts

@@ -17,7 +17,7 @@
 import { loadDendreoEnv, DENDREO } from '../src/config';
 import { DendreoClient } from '../src/dendreo/client';
 import { getSessionSignatureStatus } from '../src/dendreo/signatures';
-import { deriveEligibleDpc, deriveNumeroCompteProduit, eppConnecte, formatLabel, hasEpp, isACheval, parseHeures } from '../src/dendreo/enrich';
+import { deriveEligibleDpc, deriveNumeroCompteProduit, eppConnecte, extractDatesSynchrones, formatLabel, hasEpp, isACheval, parseHeures } from '../src/dendreo/enrich';
 import { enrichFinancement, ensureAndpcValidated } from '../src/dendreo/financement';
 import { getDb } from '../src/firebase/admin';
 import { recalcSessionCounts, upsertSession, upsertSignature } from '../src/firebase/firestore';
@@ -129,6 +129,7 @@ function mapSession(s) {
     eppAvalConnecte: false,
     eligibleDpc: false, // provisoire → fixé par enrichWithModules
     aEpp: false, // provisoire → fixé par enrichWithModules
+    datesSynchrones: [], // S12.1 : provisoire → fixé par enrichWithModules (défaut sûr si lecture LAM KO)
     // S11.1 : défauts sûrs → la session valide même si enrichFinancement échoue ;
     // écrasés dans processSession par le résultat réel (cf. Object.assign).
     financeurAndpc: false,
@@ -139,9 +140,14 @@ function mapSession(s) {
   };
 }
 
-/** Modules d'une session (1 lecture : lams.php?include=module) → vue pour enrich.ts. */
-async function fetchSessionModules(idAdf) {
-  const lams = asArray(await client.get('lams.php', { id_action_de_formation: idAdf, include: 'module' }));
+/** LAM d'une session (1 lecture : lams.php?include=module,creneaux) → porte modules
+ *  ET créneaux synchrones (S12.1). Aucune lecture Dendreo en plus qu'avant. */
+async function fetchSessionLams(idAdf) {
+  return asArray(await client.get('lams.php', { id_action_de_formation: idAdf, include: 'module,creneaux' }));
+}
+
+/** Vue modules (dédupliquée par id_module) pour enrich.ts. */
+function toModuleViews(lams) {
   const out = [];
   const seen = new Set();
   for (const l of lams) {
@@ -165,11 +171,13 @@ async function fetchSessionModules(idAdf) {
  */
 async function enrichWithModules(session) {
   try {
-    const mods = await fetchSessionModules(session.idAdf);
+    const lams = await fetchSessionLams(session.idAdf);
+    const mods = toModuleViews(lams);
     session.eppAmontConnecte = eppConnecte(mods, 'amont');
     session.eppAvalConnecte = eppConnecte(mods, 'aval');
     session.aEpp = hasEpp(mods);
     session.eligibleDpc = deriveEligibleDpc(mods);
+    session.datesSynchrones = extractDatesSynchrones(lams); // S12.1 : depuis les mêmes LAM
     // deriveNumeroCompteProduit garde l'ADF s'il est renseigné (session.numeroCompteProduit
     // non-null), sinon prend le num du module cœur.
     session.numeroCompteProduit = deriveNumeroCompteProduit(session.numeroCompteProduit, mods);

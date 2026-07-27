@@ -13,6 +13,7 @@ import {
   deriveEligibleDpc,
   deriveNumeroCompteProduit,
   eppConnecte,
+  extractDatesSynchrones,
   formatLabel,
   hasEpp,
   isACheval,
@@ -64,10 +65,16 @@ async function etapeLabel(client: DendreoClient, idEtape: string): Promise<strin
   return `etape_${idEtape}`;
 }
 
-async function fetchModules(client: DendreoClient, idAdf: string): Promise<SessionModuleView[]> {
-  const lams = asArray<Record<string, unknown>>(
-    await client.get('lams.php', { id_action_de_formation: idAdf, include: 'module' }),
+/** LAM d'une session : 1 lecture — `include=module,creneaux` porte modules ET créneaux
+ *  synchrones (S12.1). Aucune lecture Dendreo supplémentaire par rapport à avant. */
+async function fetchLams(client: DendreoClient, idAdf: string): Promise<Record<string, unknown>[]> {
+  return asArray<Record<string, unknown>>(
+    await client.get('lams.php', { id_action_de_formation: idAdf, include: 'module,creneaux' }),
   );
+}
+
+/** Vue modules (dédupliquée par id_module) pour les dérivations EPP/DPC/compte produit. */
+function toModuleViews(lams: readonly Record<string, unknown>[]): SessionModuleView[] {
   const out: SessionModuleView[] = [];
   const seen = new Set<string>();
   for (const l of lams) {
@@ -124,7 +131,8 @@ export async function syncSession(idAdf: string, client: DendreoClient = new Den
   const idEtape = String(adf.id_etape_process ?? '');
   const dateDebut = normDate(adf.date_debut);
   const dateFin = normDate(adf.date_fin);
-  const modules = await fetchModules(client, id);
+  const lams = await fetchLams(client, id);
+  const modules = toModuleViews(lams);
 
   // S11.1 : enrichissement financements/factures (résilient) — MÊME fonction que le backfill.
   await ensureAndpcValidated(client);
@@ -149,6 +157,7 @@ export async function syncSession(idAdf: string, client: DendreoClient = new Den
     eppAvalConnecte: eppConnecte(modules, 'aval'),
     eligibleDpc: deriveEligibleDpc(modules),
     aEpp: hasEpp(modules),
+    datesSynchrones: extractDatesSynchrones(lams), // S12.1 : depuis les mêmes LAM
     ...fin.session,
   };
 
