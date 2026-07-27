@@ -160,6 +160,38 @@ export function sessionToSheetRow(s: SessionDoc, noms: readonly string[] = [], h
   ];
 }
 
+// --- ONGLET "À cheval 25/26" (S13.2) — 1 LIGNE PAR PERSONNE non signée -------
+// Présentation propre à l'onglet cheval : colonnes du CSV de Loane. Source UNIQUE
+// (comme le cockpit) → réutilise ddmmyy / eppCoNc, zéro dérive. "Commentaires" est
+// une colonne MANUELLE (Loane) : toujours "" ici, JAMAIS écrasée par l'Apps Script.
+export const CHEVAL_SHEET_HEADERS = [
+  'idAdf', 'Intitulé', 'N° CP', 'N° session', 'Format', 'Début', 'Fin', 'EPP', 'Nom', 'Commercial', 'Commentaires',
+] as const;
+
+/** Colonnes MANUELLES de l'onglet cheval (repérées par en-tête, jamais écrasées). */
+export const CHEVAL_MANUAL_HEADERS = ['Commentaires'] as const;
+
+/**
+ * Ligne "cheval" = 1 participant PENDING d'une session. `nom`/`commercial` viennent du
+ * doc signature (miroir S13.1). `commercial` null/vide → EMPTY_DISPLAY ("-").
+ * "Commentaires" est TOUJOURS "" (colonne manuelle Loane, protégée côté Apps Script).
+ */
+export function chevalPersonRow(s: SessionDoc, nom: string, commercial: string | null): string[] {
+  return [
+    s.idAdf,
+    s.intitule ?? '',
+    s.numeroCompteProduit ?? '',
+    s.numeroSessionDpc ?? '',
+    s.format ?? '',
+    ddmmyy(s.dateDebut),
+    ddmmyy(s.dateFin),
+    eppCoNc(s), // même dérivation que l'onglet principal (CO/NC, "-" si pas d'EPP)
+    nom,
+    commercial && commercial.trim() !== '' ? commercial : EMPTY_DISPLAY,
+    '', // Commentaires — manuelle, jamais écrasée
+  ];
+}
+
 // --- À RELANCER --------------------------------------------------------------
 export const RELANCE_CSV_HEADERS = [
   'Participant', 'N° session DPC', 'Intitulé', 'Document', 'Envoyée le', 'Ancienneté (jours)', 'Lien Dendreo',
