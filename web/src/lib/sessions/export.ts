@@ -113,7 +113,9 @@ export const RELANCE_NOMS_HEADER = 'À relancer (noms)';
 // S11.2 — 2 colonnes ajoutées EN FIN (après les noms). Les données facture (dépôt,
 // montant facturé, paiement) remplissent les colonnes CSV EXISTANTES (Date de dépôt /
 // Montant € / Date de paiement, cf. sessionToCsvRow) → aucun en-tête dupliqué ici.
-export const V2_SHEET_HEADERS = ['Montant session', 'Hors DPC (nb)'] as const;
+// S12.2 — "Dates synchrones" ajoutée EN FIN (après "Hors DPC (nb)") : nouveau champ,
+// aucune collision d'index avec les colonnes existantes du Sheet Ops.
+export const V2_SHEET_HEADERS = ['Montant session', 'Hors DPC (nb)', 'Dates synchrones'] as const;
 export const SESSIONS_SHEET_HEADERS = ['idAdf', ...SESSIONS_CSV_HEADERS, RELANCE_NOMS_HEADER, ...V2_SHEET_HEADERS] as const;
 
 /**
@@ -130,7 +132,19 @@ export function relanceNomsCell(noms: readonly string[]): string {
 }
 
 /**
- * Ligne "sheet" : idAdf + ligne CSV cockpit + "À relancer (noms)" + les 2 colonnes S11.2.
+ * Cellule "Dates synchrones" (S12.2) : les jours des séances synchrones, DÉJÀ filtrés
+ * (session mixte/CV), dédupliqués et triés à la SOURCE (miroir `datesSynchrones`).
+ * Formatés "JJ/MM/AA" (même helper `ddmmyy` que Début/Fin), joints par ", ".
+ * Vide ([]) → EMPTY_DISPLAY. Aucune re-logique de filtre ici.
+ */
+export function datesSynchronesCell(dates: readonly string[] = []): string {
+  if (dates.length === 0) return EMPTY_DISPLAY;
+  return dates.map(ddmmyy).join(', ');
+}
+
+/**
+ * Ligne "sheet" : idAdf + ligne CSV cockpit + "À relancer (noms)" + les 2 colonnes S11.2
+ * + "Dates synchrones" (S12.2).
  *  - `noms`         : participants pending À RELANCER (financeurAndpc true|null), déjà filtrés/dédup en amont.
  *  - `horsDpcCount` : nb de participants pending financeurAndpc===false (hors-DPC → non relancés). 0 → EMPTY_DISPLAY.
  * "Montant session" = montantAndpc (Σ financements 360) ; distinct de "Montant €" = montant FACTURÉ.
@@ -142,6 +156,7 @@ export function sessionToSheetRow(s: SessionDoc, noms: readonly string[] = [], h
     relanceNomsCell(noms),
     montantFr(s.montantAndpc), // Montant session
     horsDpcCount > 0 ? String(horsDpcCount) : EMPTY_DISPLAY, // Hors DPC (nb)
+    datesSynchronesCell(s.datesSynchrones), // Dates synchrones (S12.2)
   ];
 }
 

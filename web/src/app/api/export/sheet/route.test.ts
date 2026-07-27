@@ -120,8 +120,8 @@ describe('GET /api/export/sheet', () => {
   it('idAdf en 1re colonne ; tranche CSV == EXACTEMENT l\'export CSV (réutilisation prouvée)', async () => {
     const GET = await freshRoute();
     const body = await (await GET(req(`Bearer ${TOKEN}`))).json();
-    // entêtes = 'idAdf' + les entêtes CSV + noms + les 2 colonnes S11.2
-    expect(body.headers).toEqual(['idAdf', ...SESSIONS_CSV_HEADERS, 'À relancer (noms)', 'Montant session', 'Hors DPC (nb)']);
+    // entêtes = 'idAdf' + les entêtes CSV + noms + les 2 colonnes S11.2 + Dates synchrones (S12.2)
+    expect(body.headers).toEqual(['idAdf', ...SESSIONS_CSV_HEADERS, 'À relancer (noms)', 'Montant session', 'Hors DPC (nb)', 'Dates synchrones']);
     const row = body.rows[0];
     expect(row[0]).toBe('2691'); // clé de correspondance
     // la tranche CSV (après idAdf) == la ligne CSV normalisée telle quelle
@@ -273,10 +273,10 @@ describe('GET /api/export/sheet — exclusion "Échec" (règle cockpit)', () => 
 // --- S10.2b : colonne "À relancer (noms)" -----------------------------------
 describe('GET /api/export/sheet — colonne "À relancer (noms)"', () => {
   const TODAY = '2026-07-10';
-  /** Colonne "À relancer (noms)" = 3e en partant de la fin (…, noms, Montant session, Hors DPC). */
-  const nomsDe = (body: { rows: string[][] }, idAdf: string) => body.rows.find((r) => r[0] === idAdf)?.at(-3);
-  /** Colonne "Hors DPC (nb)" = dernière. */
-  const horsDpcDe = (body: { rows: string[][] }, idAdf: string) => body.rows.find((r) => r[0] === idAdf)?.at(-1);
+  /** Colonne "À relancer (noms)" = 4e en partant de la fin (…, noms, Montant session, Hors DPC, Dates synchrones). */
+  const nomsDe = (body: { rows: string[][] }, idAdf: string) => body.rows.find((r) => r[0] === idAdf)?.at(-4);
+  /** Colonne "Hors DPC (nb)" = avant-dernière depuis S12.2 (dernière = "Dates synchrones"). */
+  const horsDpcDe = (body: { rows: string[][] }, idAdf: string) => body.rows.find((r) => r[0] === idAdf)?.at(-2);
   const ids = (body: { rows: string[][] }) => body.rows.map((r) => r[0]);
 
   beforeEach(() => {
@@ -412,7 +412,7 @@ describe('GET /api/export/sheet — colonne "À relancer (noms)"', () => {
 // --- S11.2 : nouvelles colonnes de valeur (Montant session) -----------------
 describe('GET /api/export/sheet — colonne "Montant session"', () => {
   const TODAY = '2026-07-10';
-  const montantDe = (body: { rows: string[][] }, idAdf: string) => body.rows.find((r) => r[0] === idAdf)?.at(-2);
+  const montantDe = (body: { rows: string[][] }, idAdf: string) => body.rows.find((r) => r[0] === idAdf)?.at(-3);
 
   beforeEach(() => {
     getMock.mockReset();

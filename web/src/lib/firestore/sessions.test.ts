@@ -27,6 +27,14 @@ describe('toSessionDoc — normalisation défensive à la lecture', () => {
     expect(s.totalParticipants).toBe(0);
   });
 
+  it('datesSynchrones : absent → [] ; array de strings préservé ; non-string filtrés', () => {
+    expect(toSessionDoc({ idAdf: '1', numeroComplet: 'ADF_1' }).datesSynchrones).toEqual([]);
+    expect(toSessionDoc({ idAdf: '1', numeroComplet: 'ADF_1', datesSynchrones: ['2026-03-12', '2026-03-19'] }).datesSynchrones)
+      .toEqual(['2026-03-12', '2026-03-19']);
+    expect(toSessionDoc({ idAdf: '1', numeroComplet: 'ADF_1', datesSynchrones: 'oops' }).datesSynchrones).toEqual([]); // non-array → []
+    expect(toSessionDoc({ idAdf: '1', numeroComplet: 'ADF_1', datesSynchrones: ['2026-03-12', 5, null] }).datesSynchrones).toEqual(['2026-03-12']);
+  });
+
   it('doc complet → valeurs préservées', () => {
     const raw = {
       idAdf: '9', numeroComplet: 'ADF_9', numeroSessionDpc: '26.001', numeroCompteProduit: '92622626015',

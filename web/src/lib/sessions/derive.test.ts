@@ -41,6 +41,7 @@ function make(over: Partial<SessionDoc> & { idAdf: string }): SessionDoc {
     eppAvalConnecte: over.eppAvalConnecte ?? false,
     eligibleDpc: over.eligibleDpc ?? true,
     aEpp: over.aEpp ?? false,
+    datesSynchrones: over.datesSynchrones ?? [],
     financeurAndpc: over.financeurAndpc ?? false,
     montantAndpc: over.montantAndpc ?? null,
     factureDateEnvoi: over.factureDateEnvoi ?? null,

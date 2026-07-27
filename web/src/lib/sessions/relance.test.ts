@@ -55,6 +55,7 @@ function session(over: Partial<SessionDoc> & { idAdf: string }): SessionDoc {
     eppAvalConnecte: false,
     eligibleDpc: true,
     aEpp: false,
+    datesSynchrones: [],
     financeurAndpc: false,
     montantAndpc: null,
     factureDateEnvoi: null,

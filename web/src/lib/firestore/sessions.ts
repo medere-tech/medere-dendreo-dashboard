@@ -38,6 +38,7 @@ export interface SessionDoc {
   eppAvalConnecte: boolean; // module EPP aval (cat 21) avec heures connectées > 0
   eligibleDpc: boolean; // eligible_dpc="1" du module cœur — S6.2
   aEpp: boolean; // ∃ module EPP (cat 22 ou 21)
+  datesSynchrones: string[]; // S12.1 — jours ISO "AAAA-MM-JJ" des séances synchrones (session mixte/CV) ; [] sinon
   // --- Enrichissement S11.1 : financements (V2) + factures (V3) --------------
   financeurAndpc: boolean; // ∃ financement id_financeur=360 (ANDPC)
   montantAndpc: number | null; // Σ montant_finance des lignes 360 ; null si aucune
@@ -68,6 +69,7 @@ const asNullableStr = (v: unknown): string | null => (typeof v === 'string' ? v 
 const asNullableNum = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null);
 const asNum = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
 const asBool = (v: unknown): boolean => v === true; // défaut false pour un doc pré-S5.1b
+const asStrArray = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []); // défaut [] (doc pré-S12.1)
 const asTriBool = (v: unknown): boolean | null => (v === true ? true : v === false ? false : null); // S11.1 financeurAndpc
 
 function normalizeCounts(raw: unknown): Counts {
@@ -107,6 +109,7 @@ export function toSessionDoc(raw: DocumentData): SessionDoc {
     eppAvalConnecte: asBool(raw.eppAvalConnecte),
     eligibleDpc: asBool(raw.eligibleDpc),
     aEpp: asBool(raw.aEpp),
+    datesSynchrones: asStrArray(raw.datesSynchrones),
     financeurAndpc: asBool(raw.financeurAndpc),
     montantAndpc: asNullableNum(raw.montantAndpc),
     factureDateEnvoi: asNullableStr(raw.factureDateEnvoi),
