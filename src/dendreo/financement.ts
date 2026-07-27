@@ -42,6 +42,7 @@ export interface FactureLine {
 export interface LapLink {
   idParticipant: string;
   idEntreprise: string; // laps.id_entreprise
+  commercialId: string; // laps.commercial_id (S13.1) — commercial de l'INSCRIPTION ; '' si absent
 }
 
 // --- Helpers purs -----------------------------------------------------------
@@ -127,6 +128,19 @@ export function buildFinanceurByParticipant(
   return out;
 }
 
+/**
+ * idParticipant → commercial_id de son inscription (S13.1), depuis les laps déjà lus.
+ * PURE. Ignore les laps sans idParticipant ou sans commercial_id (aucune entrée →
+ * commercial null côté mapper). L'id est résolu en NOM via loadCommerciauxReferentiel.
+ */
+export function buildCommercialIdByParticipant(laps: readonly LapLink[]): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const lap of laps) {
+    if (lap.idParticipant && lap.commercialId) out.set(lap.idParticipant, lap.commercialId);
+  }
+  return out;
+}
+
 // --- I/O RÉSILIENTE : enrichissement partagé backfill + sync ----------------
 
 function asArray<T = unknown>(json: unknown): T[] {
@@ -181,7 +195,11 @@ async function readLaps(id: string, client: DendreoClient): Promise<LapLink[]> {
   try {
     const raw = asArray<Record<string, unknown>>(await client.get('laps.php', { id_action_de_formation: id }));
     return raw
-      .map((l) => ({ idParticipant: String(l.id_participant ?? ''), idEntreprise: String(l.id_entreprise ?? '') }))
+      .map((l) => ({
+        idParticipant: String(l.id_participant ?? ''),
+        idEntreprise: String(l.id_entreprise ?? ''),
+        commercialId: String(l.commercial_id ?? ''), // S13.1 : même objet lap, 0 lecture ajoutée
+      }))
       .filter((x) => x.idParticipant !== '');
   } catch (err) {
     console.warn(`[enrichFinancement] laps.php KO idAdf=${id} : ${shortReason(err)}`);
@@ -200,6 +218,8 @@ export interface FinancementEnrichment {
   };
   /** idParticipant → financeurAndpc (true|false|null) pour chaque SignatureDoc. */
   financeurByParticipant: Map<string, boolean | null>;
+  /** idParticipant → commercial_id de l'inscription (S13.1) ; à résoudre en NOM via le référentiel. */
+  commercialIdByParticipant: Map<string, string>;
 }
 
 /**
@@ -223,6 +243,7 @@ export async function enrichFinancement(idAdf: string | number, client: DendreoC
       factureDatePaiement: agg.datePaiement,
     },
     financeurByParticipant: buildFinanceurByParticipant(laps, lines),
+    commercialIdByParticipant: buildCommercialIdByParticipant(laps),
   };
 }
 
@@ -254,4 +275,36 @@ export async function ensureAndpcValidated(client: DendreoClient): Promise<boole
 /** Réinitialise le cache de validation (usage tests uniquement). */
 export function __resetAndpcValidation(): void {
   andpcValidated = null;
+}
+
+// --- Référentiel des commerciaux (S13.1 ; une lecture, mise en cache) --------
+let commerciauxCache: Map<string, string> | null = null;
+
+/**
+ * Référentiel des commerciaux : `administrateurs.php` lu UNE seule fois → Map
+ * <id_administrateur, "Prénom NOM"> (prenom + ' ' + nom), cohérent avec le format des
+ * noms participants qu'on stocke déjà. Mise en cache module (comme ANDPC).
+ * RÉSILIENTE : lecture KO → Map VIDE + console.warn → le commercial sera `null`,
+ * jamais de crash. Prouvé S13.0 : id "48" → "Guercif Kaoufer" (= note de Loane sur la 3117).
+ */
+export async function loadCommerciauxReferentiel(client: DendreoClient): Promise<Map<string, string>> {
+  if (commerciauxCache !== null) return commerciauxCache;
+  const map = new Map<string, string>();
+  try {
+    const raw = asArray<Record<string, unknown>>(await client.get('administrateurs.php'));
+    for (const a of raw) {
+      const id = String(a.id_administrateur ?? a.id ?? '').trim();
+      const nom = [a.prenom, a.nom].map((s) => String(s ?? '').trim()).filter(Boolean).join(' ');
+      if (id && nom) map.set(id, nom);
+    }
+  } catch (err) {
+    console.warn(`[commerciaux] administrateurs.php KO (${shortReason(err)}) — commercial=null pour cette exécution.`);
+  }
+  commerciauxCache = map;
+  return commerciauxCache;
+}
+
+/** Réinitialise le cache du référentiel commerciaux (usage tests uniquement). */
+export function __resetCommerciauxReferentiel(): void {
+  commerciauxCache = null;
 }

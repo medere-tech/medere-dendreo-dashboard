@@ -57,6 +57,7 @@ Une ligne par **attestation** (participant × session × doctype). Source de la 
   viewerUrl: string | null,
   financeurAndpc: boolean | null,      // S11.1 — true=ANDPC(360) | false=autre financeur | null=aucun financement rattaché
                                        //   (chaîne : idParticipant → laps.id_entreprise → financements.id_finance → id_financeur)
+  commercial: string | null,           // S13.1 — "Prénom NOM" du commercial de l'inscription (laps.commercial_id → administrateurs.php, référentiel lu 1×/run) ; null si absent/non résolu. Coût 0 (laps déjà lu par enrichFinancement)
   sessionNumeroComplet, sessionIntitule, sessionDateDebut,
   lastSyncedAt
 }

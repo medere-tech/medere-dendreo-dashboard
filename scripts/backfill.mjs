@@ -18,7 +18,7 @@ import { loadDendreoEnv, DENDREO } from '../src/config';
 import { DendreoClient } from '../src/dendreo/client';
 import { getSessionSignatureStatus } from '../src/dendreo/signatures';
 import { deriveEligibleDpc, deriveNumeroCompteProduit, eppConnecte, extractDatesSynchrones, formatLabel, hasEpp, isACheval, parseHeures } from '../src/dendreo/enrich';
-import { enrichFinancement, ensureAndpcValidated } from '../src/dendreo/financement';
+import { enrichFinancement, ensureAndpcValidated, loadCommerciauxReferentiel } from '../src/dendreo/financement';
 import { getDb } from '../src/firebase/admin';
 import { recalcSessionCounts, upsertSession, upsertSignature } from '../src/firebase/firestore';
 
@@ -89,6 +89,7 @@ async function pool(items, size, fn) {
 // --- état global ------------------------------------------------------------
 let quotaHit = false;
 let etapesMap = new Map();
+let commerciauxRef = new Map(); // S13.1 : référentiel commerciaux, chargé 1× au démarrage (comme ANDPC)
 // Dédup inter-années : une session à cheval (start année N, end année N+1) est
 // listée par 2 années → on ne la traite qu'UNE fois, rattachée à sa 1re année
 // rencontrée (ordre croissant). Upsert idempotent par idAdf de toute façon.
@@ -192,7 +193,7 @@ async function enrichWithModules(session) {
 }
 
 // entry = AttestationLine (dates déjà normalisées ISO|null par signatures.ts).
-function mapSig(a, session, financeurAndpc) {
+function mapSig(a, session, financeurAndpc, commercial) {
   return {
     idAdf: session.idAdf,
     idParticipant: String(a.idParticipant),
@@ -204,6 +205,7 @@ function mapSig(a, session, financeurAndpc) {
     sentDate: a.sentDate ?? null,
     viewerUrl: a.viewerUrl ?? null,
     financeurAndpc: financeurAndpc ?? null, // S11.1 : true=ANDPC | false=autre | null=aucun
+    commercial: commercial ?? null, // S13.1 : "Prénom NOM" du commercial de l'inscription
     sessionNumeroComplet: session.numeroComplet,
     sessionIntitule: session.intitule,
     sessionDateDebut: session.dateDebut,
@@ -289,7 +291,9 @@ async function processSession(session) {
         await upsertSession(session); // la SESSION s'écrit TOUJOURS (avant les lignes)
         for (const a of st.attestations) {
           try {
-            await upsertSignature(mapSig(a, session, fin.financeurByParticipant.get(String(a.idParticipant)) ?? null));
+            const commercialId = fin.commercialIdByParticipant.get(String(a.idParticipant));
+            const commercial = commercialId ? commerciauxRef.get(commercialId) ?? null : null;
+            await upsertSignature(mapSig(a, session, fin.financeurByParticipant.get(String(a.idParticipant)) ?? null, commercial));
           } catch (lineErr) {
             if (isQuotaError(lineErr)) throw lineErr; // quota → remonte (arrêt propre)
             ignoredLines += 1; // une ligne KO n'abat JAMAIS la session : on l'ignore + compte
@@ -374,6 +378,7 @@ function printReport(perYear, meta, floorHasData) {
 async function main() {
   log(`# BACKFILL S2.2 — mode=${args.dryRun ? 'DRY-RUN' : 'WRITE'}${args.year ? ' year=' + args.year : ''}${args.limit != null ? ' limit=' + args.limit : ''}${args.force ? ' force' : ''}`);
   await ensureAndpcValidated(client); // S11.1 : valide le libellé "ANDPC" une fois (log d'alerte sinon)
+  commerciauxRef = await loadCommerciauxReferentiel(client); // S13.1 : référentiel commerciaux (1 lecture, cache)
   etapesMap = await fetchEtapesMap();
 
   const currentYear = new Date().getFullYear();

@@ -101,6 +101,7 @@ function validateSignatureInput(s: SignatureUpsertInput): void {
   assertNullableString(s.sentDate, 'sentDate');
   assertNullableString(s.viewerUrl, 'viewerUrl');
   assertNullableBoolean(s.financeurAndpc, 'financeurAndpc'); // S11.1 : true|false|null
+  assertNullableString(s.commercial, 'commercial'); // S13.1 : "Prénom NOM" | null
 
   // cohérence statut <-> dates
   if (s.status === 'signed' && !s.signatureDate) throw new Error('Incohérence : status=signed sans signatureDate');

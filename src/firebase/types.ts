@@ -58,6 +58,7 @@ export interface SignatureDoc {
   sentDate: string | null;
   viewerUrl: string | null;
   financeurAndpc: boolean | null; // S11.1 : true=ANDPC(360) | false=autre financeur | null=aucun financement rattaché
+  commercial: string | null; // S13.1 : "Prénom NOM" du commercial de l'inscription (laps.commercial_id → administrateurs.php) ; null si absent/non résolu
   sessionNumeroComplet: string;
   sessionIntitule: string;
   sessionDateDebut: string;

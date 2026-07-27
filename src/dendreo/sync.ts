@@ -20,7 +20,7 @@ import {
   parseHeures,
   type SessionModuleView,
 } from './enrich';
-import { enrichFinancement, ensureAndpcValidated } from './financement';
+import { enrichFinancement, ensureAndpcValidated, loadCommerciauxReferentiel } from './financement';
 import { recalcSessionCounts, upsertSession, upsertSignature } from '../firebase/firestore';
 import type { SessionUpsertInput } from '../firebase/types';
 import type { AttestationLine } from './types';
@@ -92,7 +92,7 @@ function toModuleViews(lams: readonly Record<string, unknown>[]): SessionModuleV
   return out;
 }
 
-function mapSignature(a: AttestationLine, session: SessionUpsertInput, financeurAndpc: boolean | null) {
+function mapSignature(a: AttestationLine, session: SessionUpsertInput, financeurAndpc: boolean | null, commercial: string | null) {
   return {
     idAdf: session.idAdf,
     idParticipant: String(a.idParticipant),
@@ -104,6 +104,7 @@ function mapSignature(a: AttestationLine, session: SessionUpsertInput, financeur
     sentDate: a.sentDate ?? null,
     viewerUrl: a.viewerUrl ?? null,
     financeurAndpc, // S11.1 : chaîne idParticipant → id_entreprise → financeur
+    commercial, // S13.1 : "Prénom NOM" du commercial de l'inscription (laps.commercial_id résolu)
     sessionNumeroComplet: session.numeroComplet,
     sessionIntitule: session.intitule,
     sessionDateDebut: session.dateDebut,
@@ -137,6 +138,8 @@ export async function syncSession(idAdf: string, client: DendreoClient = new Den
   // S11.1 : enrichissement financements/factures (résilient) — MÊME fonction que le backfill.
   await ensureAndpcValidated(client);
   const fin = await enrichFinancement(id, client);
+  // S13.1 : référentiel commerciaux chargé une fois (cache module, comme ANDPC).
+  const commerciaux = await loadCommerciauxReferentiel(client);
 
   const session: SessionUpsertInput = {
     idAdf: id,
@@ -164,7 +167,9 @@ export async function syncSession(idAdf: string, client: DendreoClient = new Den
   const status = await getSessionSignatureStatus(id, client); // fichiers.php + règle attestation
   await upsertSession(session);
   for (const a of status.attestations) {
-    await upsertSignature(mapSignature(a, session, fin.financeurByParticipant.get(String(a.idParticipant)) ?? null));
+    const commercialId = fin.commercialIdByParticipant.get(String(a.idParticipant));
+    const commercial = commercialId ? commerciaux.get(commercialId) ?? null : null;
+    await upsertSignature(mapSignature(a, session, fin.financeurByParticipant.get(String(a.idParticipant)) ?? null, commercial));
   }
   await recalcSessionCounts(id);
 

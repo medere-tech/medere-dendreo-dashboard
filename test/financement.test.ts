@@ -10,7 +10,10 @@ import {
   sumMontantAndpc,
   aggregateFacturesAndpc,
   buildFinanceurByParticipant,
+  buildCommercialIdByParticipant,
   enrichFinancement,
+  loadCommerciauxReferentiel,
+  __resetCommerciauxReferentiel,
   type FinancementLine,
   type FactureLine,
   type LapLink,
@@ -109,9 +112,9 @@ describe('aggregateFacturesAndpc — PAYÉES uniquement (date_paiement non vide)
 
 describe('buildFinanceurByParticipant (chaîne idParticipant → id_entreprise → financeur)', () => {
   const laps: LapLink[] = [
-    { idParticipant: 'p1', idEntreprise: 'e1' }, // ANDPC
-    { idParticipant: 'p2', idEntreprise: 'e2' }, // particulier
-    { idParticipant: 'p3', idEntreprise: 'e3' }, // aucun financement
+    { idParticipant: 'p1', idEntreprise: 'e1', commercialId: '' }, // ANDPC
+    { idParticipant: 'p2', idEntreprise: 'e2', commercialId: '' }, // particulier
+    { idParticipant: 'p3', idEntreprise: 'e3', commercialId: '' }, // aucun financement
   ];
   const lines: FinancementLine[] = [
     fin('e1', ANDPC_ID, 'opca', 500),
@@ -143,8 +146,8 @@ describe('enrichFinancement — résilience (échec d\'une lecture)', () => {
     { id_opca: ANDPC_ID, date_envoi: '2026-05-11 00:00:00', montant_total_ht: '800.00', date_paiement: '2026-05-20 00:00:00', date_emission: '2026-05-11 00:00:00' },
   ];
   const LAPS = [
-    { id_participant: 'p1', id_entreprise: 'e1' }, // ANDPC
-    { id_participant: 'p2', id_entreprise: 'e2' }, // particulier
+    { id_participant: 'p1', id_entreprise: 'e1', commercial_id: '48' }, // ANDPC + commercial 48 (réel S13.0)
+    { id_participant: 'p2', id_entreprise: 'e2' }, // particulier, PAS de commercial_id
   ];
   const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200 });
 
@@ -166,6 +169,9 @@ describe('enrichFinancement — résilience (échec d\'une lecture)', () => {
     });
     expect(r.financeurByParticipant.get('p1')).toBe(true);
     expect(r.financeurByParticipant.get('p2')).toBe(false);
+    // S13.1 : commercial_id extrait des MÊMES laps (coût 0). p2 sans commercial_id → absent.
+    expect(r.commercialIdByParticipant.get('p1')).toBe('48');
+    expect(r.commercialIdByParticipant.has('p2')).toBe(false);
   });
 
   it('échec factures.php → champs facture null, le RESTE intact', async () => {
@@ -186,6 +192,7 @@ describe('enrichFinancement — résilience (échec d\'une lecture)', () => {
     expect(r.session.montantAndpc).toBe(500);
     expect(r.session.factureMontantHt).toBe(800);
     expect(r.financeurByParticipant.size).toBe(0); // aucun lien → chaque pending sera null côté mapper
+    expect(r.commercialIdByParticipant.size).toBe(0); // laps KO → aucun commercial_id (commercial=null)
     warn.mockRestore();
   });
 
@@ -198,5 +205,52 @@ describe('enrichFinancement — résilience (échec d\'une lecture)', () => {
     expect(r.financeurByParticipant.get('p1')).toBeNull(); // laps OK mais aucune ligne de financement
     expect(r.financeurByParticipant.get('p2')).toBeNull();
     warn.mockRestore();
+  });
+});
+
+// --- S13.1 : commercial par personne ----------------------------------------
+describe('buildCommercialIdByParticipant (idParticipant → commercial_id, depuis les laps déjà lus)', () => {
+  it('mappe le commercial_id présent, IGNORE l\'inscription sans commercial_id', () => {
+    const laps: LapLink[] = [
+      { idParticipant: 'p1', idEntreprise: 'e1', commercialId: '48' },
+      { idParticipant: 'p2', idEntreprise: 'e2', commercialId: '' }, // absent → non mappé
+    ];
+    const m = buildCommercialIdByParticipant(laps);
+    expect(m.get('p1')).toBe('48');
+    expect(m.has('p2')).toBe(false); // → commercial null côté mapper
+  });
+});
+
+describe('loadCommerciauxReferentiel (S13.1) — administrateurs.php → Map<id, "Prénom NOM">', () => {
+  const ADMINS = [
+    { id_administrateur: '48', prenom: 'Guercif', nom: 'Kaoufer' }, // réel S13.0 (note de Loane sur la 3117)
+    { id_administrateur: '12', prenom: 'Jordan', nom: 'Martel' },
+  ];
+  const json = (b: unknown) => new Response(JSON.stringify(b), { status: 200 });
+  const clientWith = (impl: (url: string) => Promise<Response>): DendreoClient =>
+    new DendreoClient({ baseUrl: 'https://x/api', apiKey: 'SECRET', fetchImpl: impl, sleep: async () => {} });
+
+  it('commercial_id=48 → "Prénom NOM" = "Guercif Kaoufer" ; id inconnu → undefined (→ null côté mapper)', async () => {
+    __resetCommerciauxReferentiel();
+    const ref = await loadCommerciauxReferentiel(clientWith(async () => json(ADMINS)));
+    expect(ref.get('48')).toBe('Guercif Kaoufer');
+    expect(ref.get('999')).toBeUndefined(); // id inconnu du référentiel → mapper renverra null
+  });
+
+  it('administrateurs.php KO → Map VIDE (résilient, commercial=null), warn émis', async () => {
+    __resetCommerciauxReferentiel();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const ref = await loadCommerciauxReferentiel(clientWith(async () => new Response('err', { status: 500 })));
+    expect(ref.size).toBe(0);
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it('cache module : un 2e appel ne relit PAS administrateurs.php', async () => {
+    __resetCommerciauxReferentiel();
+    const impl = vi.fn(async () => json(ADMINS));
+    await loadCommerciauxReferentiel(clientWith(impl));
+    await loadCommerciauxReferentiel(clientWith(impl));
+    expect(impl).toHaveBeenCalledTimes(1); // 2e appel servi par le cache
   });
 });
