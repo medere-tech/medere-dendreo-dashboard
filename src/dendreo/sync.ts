@@ -157,7 +157,7 @@ export async function syncSession(idAdf: string, client: DendreoClient = new Den
     eppAvalConnecte: eppConnecte(modules, 'aval'),
     eligibleDpc: deriveEligibleDpc(modules),
     aEpp: hasEpp(modules),
-    datesSynchrones: extractDatesSynchrones(lams), // S12.1 : depuis les mêmes LAM
+    datesSynchrones: extractDatesSynchrones(lams, adf.mode_organisation as string | undefined), // S12.1 : règle niveau session
     ...fin.session,
   };
 

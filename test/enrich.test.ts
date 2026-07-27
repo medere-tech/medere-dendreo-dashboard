@@ -123,49 +123,60 @@ describe('deriveNumeroCompteProduit', () => {
   });
 });
 
-// LAM façon lams.php?include=module,creneaux (S12.1). `day` = jour Paris naïf.
-const lamSync = (...days: string[]) => ({ mode_organisation: 'elearning_sync', creneaux: days.map((day) => ({ day })) });
-const lamAsync = () => ({ mode_organisation: 'elearning_async' }); // e-learning : aucun créneau daté
+// LAM façon lams.php?include=module,creneaux (S12.1 corrigé). `day` = jour Paris naïf.
+// ⚠ Le mode du LAM n'entre PLUS dans le calcul : on datte tout créneau, le filtre est le
+// FORMAT de la SESSION (2e argument). On force donc des modes de LAM variés/absents.
+const lam = (mode: string | undefined, ...days: string[]) => ({
+  mode_organisation: mode,
+  creneaux: days.map((day) => ({ day })),
+});
 
-describe('extractDatesSynchrones (S12.1)', () => {
-  it('session Mixte (2 LAM sync + 3 async) → 2 jours triés, async ignorés', () => {
+describe('extractDatesSynchrones (S12.1 corrigé — règle niveau session)', () => {
+  it('session mixte avec créneaux → TOUS les jours datés, triés + dédupliqués', () => {
+    // LAM de modes variés (présentiel, sync, async, vide) : tous leurs créneaux comptent
     const lams = [
-      lamSync('2026-03-19'),
-      lamAsync(),
-      lamSync('2026-03-12'),
-      lamAsync(),
-      lamAsync(),
+      lam('presentiel', '2026-03-19'),
+      lam('elearning_async'), // module async sans créneau
+      lam('elearning_sync', '2026-03-12'),
+      lam(undefined, '2026-03-19'), // même jour qu'un autre LAM → dédup
     ];
-    expect(extractDatesSynchrones(lams)).toEqual(['2026-03-12', '2026-03-19']);
+    expect(extractDatesSynchrones(lams, 'mixte')).toEqual(['2026-03-12', '2026-03-19']);
   });
 
-  it('session e-learning pure (que des async) → []', () => {
-    expect(extractDatesSynchrones([lamAsync(), lamAsync()])).toEqual([]);
-    expect(extractDatesSynchrones([])).toEqual([]);
+  it('session elearning_sync (CV) avec créneaux → ses jours', () => {
+    const lams = [lam('presentiel', '2026-05-02', '2026-01-08'), lam('elearning_sync', '2026-03-30')];
+    expect(extractDatesSynchrones(lams, 'elearning_sync')).toEqual(['2026-01-08', '2026-03-30', '2026-05-02']);
   });
 
-  it('dédup : 2 créneaux le même jour (matin/aprem) → 1 jour', () => {
-    // un LAM avec 2 créneaux le 2026-01-19, ou 2 LAM sync le même jour → 1 seule date
-    expect(extractDatesSynchrones([lamSync('2026-01-19', '2026-01-19')])).toEqual(['2026-01-19']);
-    expect(extractDatesSynchrones([lamSync('2026-01-19'), lamSync('2026-01-19')])).toEqual(['2026-01-19']);
+  it('session PRÉSENTIEL avec créneaux datés → [] (format hors CV/Mixte) — cas idAdf 3586', () => {
+    const lams = [lam('presentiel', '2026-02-10'), lam('presentiel', '2026-02-11'), lam('presentiel', '2026-02-12')];
+    expect(extractDatesSynchrones(lams, 'presentiel')).toEqual([]);
   });
 
-  it('tri croissant même si créneaux désordonnés', () => {
-    const lams = [lamSync('2026-05-02', '2026-01-08'), lamSync('2026-03-30')];
-    expect(extractDatesSynchrones(lams)).toEqual(['2026-01-08', '2026-03-30', '2026-05-02']);
+  it('session elearning_async → []', () => {
+    expect(extractDatesSynchrones([lam('elearning_async'), lam(undefined, '2026-04-01')], 'elearning_async')).toEqual([]);
+    // mode session inconnu/vide → [] aussi (prudent)
+    expect(extractDatesSynchrones([lam('elearning_sync', '2026-04-01')], '')).toEqual([]);
+    expect(extractDatesSynchrones([lam('elearning_sync', '2026-04-01')], null)).toEqual([]);
+  });
+
+  it('dédup matin/aprem le même jour → 1 jour', () => {
+    // 2 créneaux le même jour dans un LAM, ou répartis sur 2 LAM → 1 seule date
+    expect(extractDatesSynchrones([lam('presentiel', '2026-01-19', '2026-01-19')], 'mixte')).toEqual(['2026-01-19']);
+    expect(extractDatesSynchrones([lam('presentiel', '2026-01-19'), lam('elearning_sync', '2026-01-19')], 'elearning_sync')).toEqual(['2026-01-19']);
   });
 
   it('robuste : LAM null, day vide/invalide, creneaux absents → ignorés (jamais de crash)', () => {
     const lams = [
       null,
-      { mode_organisation: 'elearning_sync' }, // sync mais aucun créneau
-      { mode_organisation: 'elearning_sync', creneaux: [{ day: '' }, { day: 'pas-une-date' }, {}] },
-      lamSync('2026-02-14'),
+      { mode_organisation: 'presentiel' }, // aucun créneau
+      { mode_organisation: 'presentiel', creneaux: [{ day: '' }, { day: 'pas-une-date' }, {}] },
+      lam('presentiel', '2026-02-14'),
     ];
-    expect(extractDatesSynchrones(lams)).toEqual(['2026-02-14']);
+    expect(extractDatesSynchrones(lams, 'mixte')).toEqual(['2026-02-14']);
   });
 
-  it('tolère creneau singulier (objet unique) sur un LAM sync', () => {
-    expect(extractDatesSynchrones([{ mode_organisation: 'elearning_sync', creneau: { day: '2026-04-01' } }])).toEqual(['2026-04-01']);
+  it('tolère creneau singulier (objet unique)', () => {
+    expect(extractDatesSynchrones([{ mode_organisation: 'presentiel', creneau: { day: '2026-04-01' } }], 'mixte')).toEqual(['2026-04-01']);
   });
 });

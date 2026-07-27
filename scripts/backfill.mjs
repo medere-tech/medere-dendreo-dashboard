@@ -124,6 +124,9 @@ function mapSession(s) {
     // eppAmontConnecte/eppAvalConnecte + numeroCompteProduit corrigé = fixés dans
     // processSession après lecture des modules (cf. enrichWithModules).
     format: formatLabel(s.mode_organisation),
+    // Transient (S12.1) : mode_organisation BRUT de la session, consommé par
+    // enrichWithModules pour datesSynchrones puis SUPPRIMÉ avant écriture (jamais dans le doc).
+    modeOrganisation: String(s.mode_organisation ?? ''),
     aCheval: isACheval(dateDebut, dateFin),
     eppAmontConnecte: false,
     eppAvalConnecte: false,
@@ -177,7 +180,7 @@ async function enrichWithModules(session) {
     session.eppAvalConnecte = eppConnecte(mods, 'aval');
     session.aEpp = hasEpp(mods);
     session.eligibleDpc = deriveEligibleDpc(mods);
-    session.datesSynchrones = extractDatesSynchrones(lams); // S12.1 : depuis les mêmes LAM
+    session.datesSynchrones = extractDatesSynchrones(lams, session.modeOrganisation); // S12.1 : règle niveau session
     // deriveNumeroCompteProduit garde l'ADF s'il est renseigné (session.numeroCompteProduit
     // non-null), sinon prend le num du module cœur.
     session.numeroCompteProduit = deriveNumeroCompteProduit(session.numeroCompteProduit, mods);
@@ -271,8 +274,9 @@ async function processSession(session) {
     const counts = st.counts; // { envoyes, signes, nonSignes, participantsConcernes, participantsARelancer }
     let ignoredLines = st.ignored; // lignes trackées sans doctype_id (dérivation) → déjà écartées
 
-    // Enrichissement modules (S5.1b) : +1 lecture Dendreo/session (lams.php?include=module).
+    // Enrichissement modules (S5.1b) : +1 lecture Dendreo/session (lams.php?include=module,creneaux).
     await enrichWithModules(session);
+    delete session.modeOrganisation; // transient consommé (datesSynchrones) → hors du doc Firestore
 
     // Enrichissement financements/factures (S11.1) : +3 lectures RÉSILIENTES/session
     // (financements + laps + factures). Échec → valeurs par défaut (false/null) déjà

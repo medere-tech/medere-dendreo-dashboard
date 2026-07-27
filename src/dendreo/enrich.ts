@@ -82,14 +82,21 @@ export function deriveNumeroCompteProduit(
   return any ? any.numProgrammeDpc.trim() : null;
 }
 
-// --- S12.1 : dates des séances SYNCHRONES (créneaux datés) -------------------
+// --- S12.1 (corrigé) : dates des séances SYNCHRONES (créneaux datés) ----------
 // Prouvé en S12.0 : lams.php?include=creneaux greffe les créneaux sur chaque LAM ;
 // un créneau porte `day` = jour Paris NAÏF "AAAA-MM-JJ" (Cas A, cf. firestore-model §6).
-// Un LAM `elearning_sync` = séance datée à distance ; un LAM `elearning_async` n'a
-// aucun créneau daté (module e-learning asynchrone).
+//
+// ⚠ RÈGLE AU NIVEAU SESSION (pas module). La 1re version filtrait sur le mode du LAM
+// (`elearning_sync`), ce qui RATAIT des dates : preuve réelle idAdf 3586 (session
+// PRÉSENTIEL) qui a 3 séances datées mais renvoyait []. Le mode du LAM n'est PAS fiable
+// pour repérer une séance datée. La bonne clé est le `mode_organisation` de la SESSION :
+//   - session `mixte` OU `elearning_sync` (= Classe virtuelle) → on prend TOUS les jours
+//     des créneaux datés de la session (tous les LAM, sans filtrer le mode du module) ;
+//   - sinon (`presentiel`, `elearning_async`, autre) → [].
 
 const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
-const SYNC_MODE = 'elearning_sync';
+/** Formats de SESSION (mode_organisation ADF) qui portent des séances synchrones datées. */
+const SYNC_SESSION_MODES = new Set(['mixte', 'elearning_sync']);
 
 /** Créneaux greffés sur un LAM (tolère `creneaux` array/objet unique + `creneau` singulier). */
 function creneauxOf(lam: Record<string, unknown>): Record<string, unknown>[] {
@@ -108,18 +115,17 @@ function creneauxOf(lam: Record<string, unknown>): Record<string, unknown>[] {
 /**
  * Jours des séances SYNCHRONES d'une session, depuis les LAM DÉJÀ lus
  * (`lams.php?include=module,creneaux` — aucune lecture Dendreo supplémentaire).
- * Ne garde que les créneaux des LAM `mode_organisation === 'elearning_sync'` ;
- * collecte les `day` (jour ISO "AAAA-MM-JJ"), DÉDUPLIQUE par jour, TRIE croissant.
- * On COLLECTE LES FAITS ici : aucun filtrage sur le format de session (le filtrage
- * CV/Mixte pour l'affichage se fera à l'export, cf. S12.2). PURE, sans I/O.
+ * Règle NIVEAU SESSION : si `sessionMode` ∈ {mixte, elearning_sync}, on collecte le
+ * `day` de TOUT créneau daté valide (tous les LAM, quel que soit le mode du module),
+ * DÉDUPLIQUE par jour et TRIE croissant ; sinon (présentiel/async/autre) → []. PURE.
+ * @param sessionMode `mode_organisation` de l'ADF (niveau session), pas du module.
  */
-export function extractDatesSynchrones(lams: readonly unknown[]): string[] {
+export function extractDatesSynchrones(lams: readonly unknown[], sessionMode: string | null | undefined): string[] {
+  if (!SYNC_SESSION_MODES.has(String(sessionMode ?? '').trim())) return [];
   const days = new Set<string>();
   for (const lam of lams) {
     if (!lam || typeof lam !== 'object') continue;
-    const l = lam as Record<string, unknown>;
-    if (String(l.mode_organisation ?? '').trim() !== SYNC_MODE) continue;
-    for (const c of creneauxOf(l)) {
+    for (const c of creneauxOf(lam as Record<string, unknown>)) {
       const day = String(c.day ?? '').trim();
       if (ISO_DAY.test(day)) days.add(day);
     }

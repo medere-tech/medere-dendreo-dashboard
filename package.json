@@ -10,6 +10,7 @@
     "clear-mirror": "tsx scripts/clear-mirror.mjs",
     "inspect-etapes": "tsx scripts/inspect-etapes.mjs",
     "inspect-relance": "tsx scripts/inspect-relance.mjs",
+    "verify-dates": "tsx scripts/verify-dates-synchrones.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
