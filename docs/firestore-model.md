@@ -27,10 +27,12 @@ Une session de formation + son agrégat de signatures (pour la vue transverse et
   datesSynchrones: string[],           // S12.1 — jours ISO "AAAA-MM-JJ" (jour Paris NAÏF, cf. §6 cas A) des créneaux datés. RÈGLE NIVEAU SESSION : si format session (mode_organisation ADF) ∈ {mixte, elearning_sync} → TOUS les jours des créneaux de TOUS les LAM (sans filtrer le mode du module), dédupliqués + triés croissant ; sinon (présentiel/elearning_async/autre) → []
   financeurAndpc: boolean,             // S11.1 (V2) — ∃ ligne financements.id_financeur=360 (ANDPC)
   montantAndpc: number | null,         // S11.1 (V2) — Σ financements.montant_finance des lignes 360 UNIQUEMENT ; null si aucune
-  // V3 : agrégat des factures id_opca=360 PAYÉES uniquement (date_paiement non vide ;
-  //   une facture non payée est ignorée jusqu'à son paiement). null si aucune facture payée.
-  factureDateEnvoi: string | null,     // S11.1 (V3) — plus ANCIENNE date_envoi des factures ANDPC PAYÉES, JOUR PARIS (slice 10, jamais UTC)
-  factureMontantHt: number | null,     // S11.1 (V3) — Σ montant_total_ht des factures ANDPC PAYÉES
+  // V3 : agrégat des factures id_opca=360. S13.3 — le PÉRIMÈTRE DÉPEND DU CHAMP :
+  //   la date de DÉPÔT se voit dès le dépôt (payée ou non), le montant et le paiement
+  //   attendent le paiement. AUCUNE facture ANDPC → les 3 champs null. Factures déposées
+  //   mais AUCUNE payée → factureDateEnvoi remplie, montantHt et datePaiement null.
+  factureDateEnvoi: string | null,     // S13.3 — plus ANCIENNE date_envoi non vide parmi TOUTES les factures ANDPC, PAYÉES OU NON, JOUR PARIS (slice 10, jamais UTC)
+  factureMontantHt: number | null,     // S11.1 (V3) — Σ montant_total_ht des factures ANDPC PAYÉES uniquement (date_paiement non vide)
   factureDatePaiement: string | null,  // S11.1 (V3) — plus RÉCENTE date_paiement des factures ANDPC PAYÉES, JOUR PARIS
   counts: {                            // cf. signature-rule.md §4
     envoyes: number,

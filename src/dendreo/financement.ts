@@ -71,25 +71,32 @@ export function sumMontantAndpc(lines: readonly FinancementLine[]): number | nul
 }
 
 /**
- * Agrégation des factures ANDPC (id_opca=360) PAYÉES uniquement — une session PEUT
- * en avoir plusieurs (S11.1). Une facture sans date_paiement est IGNORÉE (elle sera
- * prise en compte plus tard, une fois payée). Aucun autre filtre (avoirs hors périmètre).
- *  - montantHt   : SOMME des montant_total_ht des factures PAYÉES (null si aucune valeur).
- *  - dateEnvoi   : la PLUS ANCIENNE date_envoi non vide des factures PAYÉES.
- *  - datePaiement: la PLUS RÉCENTE date_paiement.
- * AUCUNE facture payée (même s'il existe des non payées) → les 3 champs null.
+ * Agrégation des factures ANDPC (id_opca=360) — une session PEUT en avoir plusieurs
+ * (S11.1). Aucun autre filtre que id_opca=360 (avoirs hors périmètre).
+ *
+ * S13.3 — le périmètre DÉPEND DU CHAMP (« vision B » : la date de dépôt s'affiche dès
+ * le dépôt, sans attendre le paiement) :
+ *  - dateEnvoi   : la PLUS ANCIENNE date_envoi non vide parmi TOUTES les factures ANDPC,
+ *                  PAYÉES OU NON. → visible dès le dépôt.
+ *  - montantHt   : SOMME des montant_total_ht des factures ANDPC PAYÉES uniquement.
+ *  - datePaiement: la PLUS RÉCENTE date_paiement des PAYÉES.
+ * Aucune facture ANDPC → les 3 champs null. Factures déposées mais AUCUNE payée →
+ * dateEnvoi remplie, montantHt et datePaiement null.
  */
 export function aggregateFacturesAndpc(factures: readonly FactureLine[]): {
   montantHt: number | null;
   dateEnvoi: string | null;
   datePaiement: string | null;
 } {
-  // id_opca=360 ET date_paiement renseignée (payée).
-  const payees = factures.filter((f) => f.idOpca === ANDPC_ID && f.datePaiement !== null && f.datePaiement !== '');
-  if (payees.length === 0) return { montantHt: null, dateEnvoi: null, datePaiement: null };
+  // TOUTES les factures ANDPC (déposées, payées ou non) → base de la date de dépôt.
+  const toutesAndpc = factures.filter((f) => f.idOpca === ANDPC_ID);
+  if (toutesAndpc.length === 0) return { montantHt: null, dateEnvoi: null, datePaiement: null };
 
+  // Sous-ensemble PAYÉ (date_paiement renseignée) → base du montant et de la date de paiement.
+  const payees = toutesAndpc.filter((f) => f.datePaiement !== null && f.datePaiement !== '');
+
+  const envois = toutesAndpc.map((f) => f.dateEnvoi).filter((d): d is string => d !== null && d !== '');
   const hts = payees.map((f) => f.montantHt).filter((m): m is number => m !== null);
-  const envois = payees.map((f) => f.dateEnvoi).filter((d): d is string => d !== null && d !== '');
   const paiements = payees.map((f) => f.datePaiement).filter((d): d is string => d !== null && d !== '');
 
   return {

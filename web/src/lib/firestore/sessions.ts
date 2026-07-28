@@ -42,7 +42,7 @@ export interface SessionDoc {
   // --- Enrichissement S11.1 : financements (V2) + factures (V3) --------------
   financeurAndpc: boolean; // ∃ financement id_financeur=360 (ANDPC)
   montantAndpc: number | null; // Σ montant_finance des lignes 360 ; null si aucune
-  factureDateEnvoi: string | null; // plus ancienne date_envoi des factures ANDPC PAYÉES (jour Paris)
+  factureDateEnvoi: string | null; // S13.3 — plus ancienne date_envoi de TOUTES les factures ANDPC, payées OU NON (jour Paris)
   factureMontantHt: number | null; // Σ montant_total_ht des factures ANDPC PAYÉES
   factureDatePaiement: string | null; // plus récente date_paiement des factures ANDPC PAYÉES (jour Paris)
   counts: Counts;

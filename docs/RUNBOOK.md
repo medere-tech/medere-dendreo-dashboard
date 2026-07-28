@@ -172,10 +172,12 @@ Deux garanties importantes :
 
 ### Ce qu'un Ops voit comme « vide » — et pourquoi c'est normal
 Les colonnes de **facturation** (date de dépôt, montant facturé, date de paiement) restent **vides
-tant que la session n'a pas été facturée / payée** dans Dendreo. Une session récente qui vient de
-se terminer n'en est pas encore à l'étape facture : ses colonnes se rempliront **progressivement**,
-au fil des semaines, à mesure que les factures sont émises et payées. « Vide » veut donc dire « pas
-encore facturé », pas « donnée manquante ».
+tant que la session n'a pas été facturée** dans Dendreo. Une session récente qui vient de se
+terminer n'en est pas encore à l'étape facture : ses colonnes se rempliront **progressivement**,
+au fil des semaines. La **date de dépôt** apparaît **dès que la facture est déposée** ; le
+**montant** et la **date de paiement** attendent le **paiement**. Une session avec une date de
+dépôt mais un montant vide est donc **normale** : la facture est déposée, pas encore payée.
+« Vide » veut dire « pas encore à cette étape », pas « donnée manquante ».
 
 ### Le périmètre du Sheet
 Le Sheet ne montre que les sessions **débutant à partir du 01/01/2026**, **terminées** (fin ≤
@@ -267,10 +269,13 @@ Ces règles ne concernent que le Google Sheet, pas le dashboard web.
   exact « ANDPC » (l'outil valide le libellé, pas seulement l'identifiant, par prudence).
 - **Montant de session** = la somme des montants HT des financements ANDPC de la session
   (les financements d'autres origines — particulier, employeur, autre organisme — sont exclus).
-- **Colonnes de facturation** = elles ne comptent que les **factures ANDPC payées** (celles ayant
-  une date de paiement). Une facture non payée est ignorée jusqu'à son paiement. S'il y a plusieurs
-  factures payées : le montant est leur somme, la date de dépôt est la plus ancienne, la date de
-  paiement la plus récente.
+- **Colonnes de facturation** = le périmètre **dépend de la colonne** :
+  - **Date de dépôt** = la plus ancienne date de dépôt parmi **toutes** les factures ANDPC de la
+    session, **payées ou non** → elle s'affiche **dès le dépôt**, sans attendre le paiement.
+  - **Montant facturé** = la somme des montants HT des factures ANDPC **payées uniquement**.
+  - **Date de paiement** = la plus récente date de paiement des factures ANDPC **payées**.
+  Aucune facture ANDPC → les trois colonnes sont vides. Des factures déposées mais aucune payée →
+  seule la date de dépôt est remplie.
 - **« Hors DPC (nb) »** = le nombre de personnes non signées de la session dont le financement
   **n'est pas** l'ANDPC. Ces personnes sont **retirées** de la colonne des noms à relancer (inutile
   de les relancer) et comptées ici à la place. Une personne sans aucun financement rattaché reste,
@@ -429,7 +434,7 @@ privilège** (lecture seule, révocable). Il doit être **identique** aux deux e
 - **Financement** — la prise en charge financière d'un participant (par l'ANDPC, un employeur, ou
   le participant lui-même) ; sert au montant de session et au repérage « hors DPC » dans le Sheet.
 - **Facture** — le document de facturation d'une session ; le Sheet n'en retient que les factures
-  ANDPC payées (date de dépôt, montant, date de paiement).
+  ANDPC : la date de dépôt dès le dépôt, le montant et la date de paiement une fois payées.
 - **Apps Script** — le petit programme Google qui vit dans le Google Sheet et le remplit depuis
   l'outil (menu « Médéré », déclencheur automatique).
 - **Quota Firestore** — les limites gratuites du plan Firebase (20 000 écritures / 50 000 lectures
