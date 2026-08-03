@@ -172,9 +172,12 @@ export async function syncSession(idAdf: string, client: DendreoClient = new Den
   const lams = await fetchLams(client, id);
   const modules = toModuleViews(lams);
 
+  // S15 : calculé AVANT l'enrichissement — le split facture 1/2 en dépend (0 lecture ajoutée).
+  const aCheval = isACheval(dateDebut, dateFin);
+
   // S11.1 : enrichissement financements/factures (résilient) — MÊME fonction que le backfill.
   await ensureAndpcValidated(client);
-  const fin = await enrichFinancement(id, client);
+  const fin = await enrichFinancement(id, client, aCheval);
   // S13.1 : référentiel commerciaux chargé une fois (cache module, comme ANDPC).
   const commerciaux = await loadCommerciauxReferentiel(client);
 
@@ -192,7 +195,7 @@ export async function syncSession(idAdf: string, client: DendreoClient = new Den
     type: String(adf.type ?? ''),
     totalParticipants: Number(adf.total_participants ?? 0) || 0,
     format: formatLabel(adf.mode_organisation as string | undefined),
-    aCheval: isACheval(dateDebut, dateFin),
+    aCheval,
     eppAmontConnecte: eppConnecte(modules, 'amont'),
     eppAvalConnecte: eppConnecte(modules, 'aval'),
     eligibleDpc: deriveEligibleDpc(modules),

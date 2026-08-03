@@ -141,6 +141,11 @@ function mapSession(s) {
     factureDateEnvoi: null,
     factureMontantHt: null,
     factureDatePaiement: null,
+    // S15 : facture 1/2 (sessions à cheval) — défauts sûrs, écrasés par enrichFinancement.
+    facture1DateEnvoi: null,
+    facture1DatePaiement: null,
+    facture2DateEnvoi: null,
+    facture2DatePaiement: null,
   };
 }
 
@@ -285,7 +290,8 @@ async function processSession(session) {
     // Enrichissement financements/factures (S11.1) : +3 lectures RÉSILIENTES/session
     // (financements + laps + factures). Échec → valeurs par défaut (false/null) déjà
     // posées par mapSession → la session n'est JAMAIS perdue. MÊME fonction que sync.ts.
-    const fin = await enrichFinancement(session.idAdf, client);
+    // S15 : `session.aCheval` est déjà posé par mapSession → alimente le split facture 1/2.
+    const fin = await enrichFinancement(session.idAdf, client, session.aCheval);
     Object.assign(session, fin.session);
 
     if (!args.dryRun) {

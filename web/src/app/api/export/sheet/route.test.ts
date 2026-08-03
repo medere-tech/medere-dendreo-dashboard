@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { SESSIONS_CSV_HEADERS } from '@/lib/sessions/export';
+import { SESSIONS_CSV_HEADERS, SESSIONS_SHEET_HEADERS } from '@/lib/sessions/export';
 import { sessionToCsvRow } from '@/lib/sessions/export';
 import { toSessionDoc } from '@/lib/firestore/sessions';
 import { EMPTY_DISPLAY } from '@/lib/format';
@@ -84,6 +84,12 @@ beforeEach(() => {
   selectSpy.mockReset();
 });
 
+/** Lit une cellule PAR SON EN-TÊTE : ajouter une colonne en fin ne casse plus les tests. */
+const cellule = (body: { rows: string[][] }, idAdf: string, header: string): string | undefined =>
+  body.rows.find((r) => r[0] === idAdf)?.[
+    SESSIONS_SHEET_HEADERS.indexOf(header as (typeof SESSIONS_SHEET_HEADERS)[number])
+  ];
+
 describe('GET /api/export/sheet', () => {
   beforeEach(() => {
     getMock.mockReset();
@@ -120,8 +126,13 @@ describe('GET /api/export/sheet', () => {
   it('idAdf en 1re colonne ; tranche CSV == EXACTEMENT l\'export CSV (réutilisation prouvée)', async () => {
     const GET = await freshRoute();
     const body = await (await GET(req(`Bearer ${TOKEN}`))).json();
-    // entêtes = 'idAdf' + les entêtes CSV + noms + les 2 colonnes S11.2 + Dates synchrones (S12.2)
-    expect(body.headers).toEqual(['idAdf', ...SESSIONS_CSV_HEADERS, 'À relancer (noms)', 'Montant session', 'Hors DPC (nb)', 'Dates synchrones']);
+    // entêtes = 'idAdf' + CSV + noms + S11.2 + Dates synchrones (S12.2) + facture 1/2 (S15).
+    // La route ne redéfinit AUCUN en-tête : elle sert SESSIONS_SHEET_HEADERS tel quel.
+    expect(body.headers).toEqual([...SESSIONS_SHEET_HEADERS]);
+    expect(body.headers.slice(0, 1 + SESSIONS_CSV_HEADERS.length)).toEqual(['idAdf', ...SESSIONS_CSV_HEADERS]);
+    expect(body.headers.slice(-4)).toEqual([
+      'Facture 1 - envoi', 'Facture 1 - paiement', 'Facture 2 - envoi', 'Facture 2 - paiement',
+    ]);
     const row = body.rows[0];
     expect(row[0]).toBe('2691'); // clé de correspondance
     // la tranche CSV (après idAdf) == la ligne CSV normalisée telle quelle
@@ -273,10 +284,8 @@ describe('GET /api/export/sheet — exclusion "Échec" (règle cockpit)', () => 
 // --- S10.2b : colonne "À relancer (noms)" -----------------------------------
 describe('GET /api/export/sheet — colonne "À relancer (noms)"', () => {
   const TODAY = '2026-07-10';
-  /** Colonne "À relancer (noms)" = 4e en partant de la fin (…, noms, Montant session, Hors DPC, Dates synchrones). */
-  const nomsDe = (body: { rows: string[][] }, idAdf: string) => body.rows.find((r) => r[0] === idAdf)?.at(-4);
-  /** Colonne "Hors DPC (nb)" = avant-dernière depuis S12.2 (dernière = "Dates synchrones"). */
-  const horsDpcDe = (body: { rows: string[][] }, idAdf: string) => body.rows.find((r) => r[0] === idAdf)?.at(-2);
+  const nomsDe = (body: { rows: string[][] }, idAdf: string) => cellule(body, idAdf, 'À relancer (noms)');
+  const horsDpcDe = (body: { rows: string[][] }, idAdf: string) => cellule(body, idAdf, 'Hors DPC (nb)');
   const ids = (body: { rows: string[][] }) => body.rows.map((r) => r[0]);
 
   beforeEach(() => {
@@ -412,7 +421,7 @@ describe('GET /api/export/sheet — colonne "À relancer (noms)"', () => {
 // --- S11.2 : nouvelles colonnes de valeur (Montant session) -----------------
 describe('GET /api/export/sheet — colonne "Montant session"', () => {
   const TODAY = '2026-07-10';
-  const montantDe = (body: { rows: string[][] }, idAdf: string) => body.rows.find((r) => r[0] === idAdf)?.at(-3);
+  const montantDe = (body: { rows: string[][] }, idAdf: string) => cellule(body, idAdf, 'Montant session');
 
   beforeEach(() => {
     getMock.mockReset();

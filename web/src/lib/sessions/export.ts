@@ -115,7 +115,13 @@ export const RELANCE_NOMS_HEADER = 'À relancer (noms)';
 // Montant € / Date de paiement, cf. sessionToCsvRow) → aucun en-tête dupliqué ici.
 // S12.2 — "Dates synchrones" ajoutée EN FIN (après "Hors DPC (nb)") : nouveau champ,
 // aucune collision d'index avec les colonnes existantes du Sheet Ops.
-export const V2_SHEET_HEADERS = ['Montant session', 'Hors DPC (nb)', 'Dates synchrones'] as const;
+// S15 — 4 colonnes facture 1/2 ajoutées EN FIN (après "Dates synchrones") : elles ne
+// concernent QUE les sessions à cheval (sinon "-"), et la colonne "Montant €" (montant
+// payé) reste STRICTEMENT inchangée. Aucun index de colonne existante ne bouge.
+export const V2_SHEET_HEADERS = [
+  'Montant session', 'Hors DPC (nb)', 'Dates synchrones',
+  'Facture 1 - envoi', 'Facture 1 - paiement', 'Facture 2 - envoi', 'Facture 2 - paiement',
+] as const;
 export const SESSIONS_SHEET_HEADERS = ['idAdf', ...SESSIONS_CSV_HEADERS, RELANCE_NOMS_HEADER, ...V2_SHEET_HEADERS] as const;
 
 /**
@@ -144,10 +150,11 @@ export function datesSynchronesCell(dates: readonly string[] = []): string {
 
 /**
  * Ligne "sheet" : idAdf + ligne CSV cockpit + "À relancer (noms)" + les 2 colonnes S11.2
- * + "Dates synchrones" (S12.2).
+ * + "Dates synchrones" (S12.2) + les 4 colonnes facture 1/2 (S15).
  *  - `noms`         : participants pending À RELANCER (financeurAndpc true|null), déjà filtrés/dédup en amont.
  *  - `horsDpcCount` : nb de participants pending financeurAndpc===false (hors-DPC → non relancés). 0 → EMPTY_DISPLAY.
  * "Montant session" = montantAndpc (Σ financements 360) ; distinct de "Montant €" = montant FACTURÉ.
+ * Les 4 colonnes S15 sont "-" hors session à cheval : le miroir les y laisse null.
  */
 export function sessionToSheetRow(s: SessionDoc, noms: readonly string[] = [], horsDpcCount = 0): string[] {
   return [
@@ -157,6 +164,10 @@ export function sessionToSheetRow(s: SessionDoc, noms: readonly string[] = [], h
     montantFr(s.montantAndpc), // Montant session
     horsDpcCount > 0 ? String(horsDpcCount) : EMPTY_DISPLAY, // Hors DPC (nb)
     datesSynchronesCell(s.datesSynchrones), // Dates synchrones (S12.2)
+    ddmmyyOrDash(s.facture1DateEnvoi), // Facture 1 - envoi     (S15, à cheval uniquement)
+    ddmmyyOrDash(s.facture1DatePaiement), // Facture 1 - paiement  (S15)
+    ddmmyyOrDash(s.facture2DateEnvoi), // Facture 2 - envoi     (S15)
+    ddmmyyOrDash(s.facture2DatePaiement), // Facture 2 - paiement  (S15)
   ];
 }
 

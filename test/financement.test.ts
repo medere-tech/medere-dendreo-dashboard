@@ -9,6 +9,7 @@ import {
   toParisDay,
   sumMontantAndpc,
   aggregateFacturesAndpc,
+  splitFacturesAcheval,
   buildFinanceurByParticipant,
   buildCommercialIdByParticipant,
   buildParcoursByParticipant,
@@ -28,7 +29,8 @@ const fac = (
   dateEnvoi: string | null,
   datePaiement: string | null,
   dateEmission: string | null = null,
-): FactureLine => ({ idOpca, montantHt, dateEnvoi, datePaiement, dateEmission });
+  idFacture = '', // S15 : départage du tri quand deux factures partagent la date d'émission
+): FactureLine => ({ idFacture, idOpca, montantHt, dateEnvoi, datePaiement, dateEmission });
 
 describe('parseMontant / toParisDay', () => {
   it('parseMontant gère virgule décimale, chaîne Dendreo et vide', () => {
@@ -135,6 +137,129 @@ describe('aggregateFacturesAndpc — S13.3 : dépôt (TOUTES) vs paiement (PAYÉ
   });
 });
 
+// --- S15 : FACTURE 1 / FACTURE 2 des sessions À CHEVAL -----------------------
+// Cas RÉELS (recon 3246 + 3328) : le tri par date_emission croissante rattache la
+// position 1 au budget de l'année de DÉBUT, la position 2 à celui de l'année de FIN.
+describe('splitFacturesAcheval — S15', () => {
+  const VIDE = {
+    facture1DateEnvoi: null, facture1DatePaiement: null,
+    facture2DateEnvoi: null, facture2DatePaiement: null,
+  };
+
+  it('cas réel 3246 (début 2025-07 → fin 2026-05) : F1 payée, F2 déposée non payée', () => {
+    // FA-2026-0766 (id 4594) émise le 03/07 = budget 2025 ; FA-2026-0794 (id 4622)
+    // émise le 13/07 = budget 2026. Les DEUX sont émises en 2026 : c'est bien l'ORDRE
+    // qui discrimine, jamais l'année d'émission.
+    const factures = [
+      fac(ANDPC_ID, 1111.5, '2026-07-03', '2026-07-20', '2026-07-03', '4594'),
+      fac(ANDPC_ID, 4056.5, '2026-07-13', null, '2026-07-13', '4622'),
+    ];
+    expect(splitFacturesAcheval(factures, true)).toEqual({
+      facture1DateEnvoi: '2026-07-03', facture1DatePaiement: '2026-07-20',
+      facture2DateEnvoi: '2026-07-13', facture2DatePaiement: null,
+    });
+  });
+
+  it('l\'ordre d\'arrivée de Dendreo n\'influe PAS (le tri fait foi)', () => {
+    const desordre = [
+      fac(ANDPC_ID, 4056.5, '2026-07-13', null, '2026-07-13', '4622'),
+      fac(ANDPC_ID, 1111.5, '2026-07-03', '2026-07-20', '2026-07-03', '4594'),
+    ];
+    expect(splitFacturesAcheval(desordre, true).facture1DateEnvoi).toBe('2026-07-03');
+  });
+
+  it('cas réel 3328 (début 2025-12 → fin 2026-03) : F1 payée SANS date_envoi, F2 envoyée non payée', () => {
+    // FA-2025-1133 (id 3771) émise 10/12/2025, date_envoi VIDE, payée le 22/12/2025 ;
+    // FA-2026-0851 (id 4679) émise+envoyée le 29/07/2026, non payée.
+    const factures = [
+      fac(ANDPC_ID, 16837.2, null, '2025-12-22', '2025-12-10', '3771'),
+      fac(ANDPC_ID, 4542.2, '2026-07-29', null, '2026-07-29', '4679'),
+    ];
+    expect(splitFacturesAcheval(factures, true)).toEqual({
+      facture1DateEnvoi: null, facture1DatePaiement: '2025-12-22',
+      facture2DateEnvoi: '2026-07-29', facture2DatePaiement: null,
+    });
+  });
+
+  it('session NON à cheval → les 4 champs null, MÊME avec 2 factures ANDPC', () => {
+    const factures = [
+      fac(ANDPC_ID, 1111.5, '2026-07-03', '2026-07-20', '2026-07-03', '4594'),
+      fac(ANDPC_ID, 4056.5, '2026-07-13', null, '2026-07-13', '4622'),
+    ];
+    expect(splitFacturesAcheval(factures, false)).toEqual(VIDE);
+  });
+
+  it('à cheval avec UNE SEULE facture ANDPC → F1 remplie, F2 null (on n\'invente pas)', () => {
+    const r = splitFacturesAcheval([fac(ANDPC_ID, 1111.5, '2026-07-03', '2026-07-20', '2026-07-03', '4594')], true);
+    expect(r).toEqual({
+      facture1DateEnvoi: '2026-07-03', facture1DatePaiement: '2026-07-20',
+      facture2DateEnvoi: null, facture2DatePaiement: null,
+    });
+  });
+
+  it('à cheval sans AUCUNE facture ANDPC → 4 null (liste vide, ou seulement non-360)', () => {
+    expect(splitFacturesAcheval([], true)).toEqual(VIDE);
+    expect(splitFacturesAcheval([fac('449369', 300, '2026-01-01', '2026-01-10', '2026-01-01', '1')], true)).toEqual(VIDE);
+  });
+
+  it('les factures non-ANDPC ne prennent JAMAIS une position (filtrées avant le tri)', () => {
+    const factures = [
+      fac('2669', 999, '2025-01-01', '2025-01-10', '2025-01-01', '1'), // autre financeur, la plus ancienne
+      fac(ANDPC_ID, 1111.5, '2026-07-03', '2026-07-20', '2026-07-03', '4594'),
+      fac(ANDPC_ID, 4056.5, '2026-07-13', null, '2026-07-13', '4622'),
+    ];
+    expect(splitFacturesAcheval(factures, true).facture1DateEnvoi).toBe('2026-07-03');
+  });
+
+  it('même date_emission → départage par id_facture CROISSANT (numérique, pas lexicographique)', () => {
+    const factures = [
+      fac(ANDPC_ID, 200, '2026-03-02', null, '2026-03-01', '1000'),
+      fac(ANDPC_ID, 100, '2026-03-01', null, '2026-03-01', '999'), // 999 < 1000 → Facture 1
+    ];
+    const r = splitFacturesAcheval(factures, true);
+    expect(r.facture1DateEnvoi).toBe('2026-03-01');
+    expect(r.facture2DateEnvoi).toBe('2026-03-02');
+  });
+
+  it('facture SANS date_emission → reléguée en dernier (jamais promue Facture 1)', () => {
+    const factures = [
+      fac(ANDPC_ID, 100, '2026-01-05', null, null, '9000'), // pas d'émission → passe 2e
+      fac(ANDPC_ID, 200, '2026-02-10', null, '2026-02-10', '9001'),
+    ];
+    const r = splitFacturesAcheval(factures, true);
+    expect(r.facture1DateEnvoi).toBe('2026-02-10');
+    expect(r.facture2DateEnvoi).toBe('2026-01-05');
+  });
+
+  it('> 2 factures ANDPC → seules les 2 plus anciennes alimentent les colonnes', () => {
+    const factures = [
+      fac(ANDPC_ID, 100, '2026-01-01', null, '2026-01-01', '1'),
+      fac(ANDPC_ID, 200, '2026-02-01', null, '2026-02-01', '2'),
+      fac(ANDPC_ID, 300, '2026-03-01', null, '2026-03-01', '3'), // ignorée par le split
+    ];
+    const r = splitFacturesAcheval(factures, true);
+    expect(r.facture1DateEnvoi).toBe('2026-01-01');
+    expect(r.facture2DateEnvoi).toBe('2026-02-01');
+  });
+
+  it('date vide ("") traitée comme absente (jamais affichée comme une date)', () => {
+    const r = splitFacturesAcheval([fac(ANDPC_ID, 100, '', '', '2026-01-01', '1')], true);
+    expect(r.facture1DateEnvoi).toBeNull();
+    expect(r.facture1DatePaiement).toBeNull();
+  });
+
+  it('n\'altère PAS l\'agrégat existant (montant payé inchangé, cf. S13.3)', () => {
+    const factures = [
+      fac(ANDPC_ID, 1111.5, '2026-07-03', '2026-07-20', '2026-07-03', '4594'),
+      fac(ANDPC_ID, 4056.5, '2026-07-13', null, '2026-07-13', '4622'),
+    ];
+    splitFacturesAcheval(factures, true);
+    expect(aggregateFacturesAndpc(factures)).toEqual({
+      montantHt: 1111.5, dateEnvoi: '2026-07-03', datePaiement: '2026-07-20',
+    });
+  });
+});
+
 describe('buildFinanceurByParticipant (chaîne idParticipant → id_entreprise → financeur)', () => {
   const laps: LapLink[] = [
     { idParticipant: 'p1', idEntreprise: 'e1', commercialId: '', presence: 'OUI', firstLamInscritId: '6020' }, // ANDPC
@@ -189,10 +314,11 @@ describe('enrichFinancement — résilience (échec d\'une lecture)', () => {
     return new DendreoClient({ baseUrl: 'https://x/api', apiKey: 'SECRET', fetchImpl, sleep: async () => {} });
   }
 
-  it('tout OK → toutes les valeurs remplies (référence)', async () => {
-    const r = await enrichFinancement('A1', makeClient(new Set()));
+  it('tout OK, session NON à cheval → valeurs remplies, les 4 champs S15 null', async () => {
+    const r = await enrichFinancement('A1', makeClient(new Set()), false);
     expect(r.session).toEqual({
       financeurAndpc: true, montantAndpc: 500, factureDateEnvoi: '2026-05-11', factureMontantHt: 800, factureDatePaiement: '2026-05-20',
+      facture1DateEnvoi: null, facture1DatePaiement: null, facture2DateEnvoi: null, facture2DatePaiement: null,
     });
     expect(r.financeurByParticipant.get('p1')).toBe(true);
     expect(r.financeurByParticipant.get('p2')).toBe(false);
@@ -206,9 +332,11 @@ describe('enrichFinancement — résilience (échec d\'une lecture)', () => {
 
   it('échec factures.php → champs facture null, le RESTE intact', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const r = await enrichFinancement('A2', makeClient(new Set(['factures'])));
+    const r = await enrichFinancement('A2', makeClient(new Set(['factures'])), true); // même à cheval
     expect(r.session).toEqual({
       financeurAndpc: true, montantAndpc: 500, factureDateEnvoi: null, factureMontantHt: null, factureDatePaiement: null,
+      // S15 : lecture factures KO → les 4 champs null, la session n'est JAMAIS perdue.
+      facture1DateEnvoi: null, facture1DatePaiement: null, facture2DateEnvoi: null, facture2DatePaiement: null,
     });
     expect(r.financeurByParticipant.get('p1')).toBe(true); // classification préservée
     expect(warn).toHaveBeenCalled();
@@ -217,7 +345,7 @@ describe('enrichFinancement — résilience (échec d\'une lecture)', () => {
 
   it('échec laps.php → session intacte, map financeur VIDE (pending → null)', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const r = await enrichFinancement('A3', makeClient(new Set(['laps'])));
+    const r = await enrichFinancement('A3', makeClient(new Set(['laps'])), false);
     expect(r.session.financeurAndpc).toBe(true);
     expect(r.session.montantAndpc).toBe(500);
     expect(r.session.factureMontantHt).toBe(800);
@@ -229,7 +357,7 @@ describe('enrichFinancement — résilience (échec d\'une lecture)', () => {
 
   it('échec financements.php → financeurAndpc false + montant null, factures OK, participants null', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const r = await enrichFinancement('A4', makeClient(new Set(['financements'])));
+    const r = await enrichFinancement('A4', makeClient(new Set(['financements'])), false);
     expect(r.session.financeurAndpc).toBe(false);
     expect(r.session.montantAndpc).toBeNull();
     expect(r.session.factureMontantHt).toBe(800); // factures lues malgré tout

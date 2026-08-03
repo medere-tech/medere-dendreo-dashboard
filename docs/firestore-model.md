@@ -34,6 +34,22 @@ Une session de formation + son agrégat de signatures (pour la vue transverse et
   factureDateEnvoi: string | null,     // S13.3 — plus ANCIENNE date_envoi non vide parmi TOUTES les factures ANDPC, PAYÉES OU NON, JOUR PARIS (slice 10, jamais UTC)
   factureMontantHt: number | null,     // S11.1 (V3) — Σ montant_total_ht des factures ANDPC PAYÉES uniquement (date_paiement non vide)
   factureDatePaiement: string | null,  // S11.1 (V3) — plus RÉCENTE date_paiement des factures ANDPC PAYÉES, JOUR PARIS
+  // S15 — FACTURE 1 / FACTURE 2 des sessions À CHEVAL (demande Justine). Le budget ANDPC
+  //   est ANNUEL : une session à cheval est facturée sur le budget de l'année de DÉBUT
+  //   puis sur celui de l'année de FIN. AUCUN champ de la facture ne porte l'année de
+  //   budget (78 clés vérifiées : ni période, ni année, ni libellé) — c'est l'ORDRE
+  //   D'ÉMISSION qui la porte : la facture du budget N est toujours émise avant celle du
+  //   budget N+1. Tri des factures id_opca=360 par date_emission CROISSANTE, départage
+  //   id_facture croissant → position 1 = année de début, position 2 = année de fin.
+  //   ⚠ date_envoi n'est PAS discriminante (une facture 2025 peut être envoyée en 2026 si
+  //   des PS signent en retard) et peut être VIDE sur une facture payée (cas réel 3328).
+  //   Session NON à cheval → les 4 champs null. À cheval avec 1 seule facture → facture2* null.
+  //   > 2 factures → seules les 2 plus anciennes alimentent ces colonnes. `factureMontantHt`
+  //   (montant payé) reste l'agrégat S13.3, INCHANGÉ.
+  facture1DateEnvoi: string | null,    // S15 — date_envoi de la facture ANDPC la plus ancienne (JOUR PARIS)
+  facture1DatePaiement: string | null, // S15 — date_paiement de cette même facture
+  facture2DateEnvoi: string | null,    // S15 — date_envoi de la 2e facture ANDPC par date_emission
+  facture2DatePaiement: string | null, // S15 — date_paiement de cette même facture
   counts: {                            // cf. signature-rule.md §4
     envoyes: number,
     signes: number,
@@ -95,6 +111,7 @@ Déclarés dans `firestore.indexes.json` :
 - Rejouer le backfill, recevoir un webhook, ou relancer la sync → **met à jour le même doc** sans doublon. Last-write-wins.
 - `counts` et `oldestPendingSentDate` de la session sont **recalculés** à chaque sync de la session (dérivés des `signatures` de cette session).
 - **Enrichissement S5.1b/S6.2/S12.1** (`format`, `aCheval`, `eppAmontConnecte`, `eppAvalConnecte`, `eligibleDpc`, `aEpp`, `datesSynchrones`, `numeroCompteProduit` corrigé) : `format`/`aCheval` sont dérivés de l'ADF seul ; les booléens EPP, `eligibleDpc`, `aEpp`, `datesSynchrones` et la correction `numeroCompteProduit` viennent des **LAM** via **1 lecture / session** — `lams.php?id_action_de_formation={id}&include=module,creneaux` (porte `id_categorie_module`, `c_nombre_dheures_connectees`, `num_programme_dpc`, `eligible_dpc`, et les `creneaux` datés — champ `day`). **`include=creneaux` est GRATUIT** : même requête, aucune lecture Dendreo supplémentaire (S12.0). Logique pure et testée : `src/dendreo/enrich.ts` (`extractDatesSynchrones(lams, sessionMode)`, partagée backfill + sync — le filtre CV/Mixte est **au niveau session**, pas module : le mode du LAM n'est pas fiable, cf. idAdf 3586 présentiel qui a des séances datées). Une lecture LAM KO n'empêche pas l'écriture de la session (valeurs ADF-only conservées ; `datesSynchrones` reste `[]`).
+- **Enrichissement S11.1/S15 — financements + factures** : `enrichFinancement(idAdf, client, aCheval)` (`src/dendreo/financement.ts`, **partagée backfill + sync**) fait **3 lectures résilientes / session** (`financements.php`, `factures.php`, `laps.php`). Le split **S15** (`splitFacturesAcheval`) rejoue les factures **déjà lues** → **0 lecture Dendreo ajoutée**. `aCheval` est passé par l'appelant (déjà calculé par `isACheval(dateDebut, dateFin)`), jamais recalculé ici. Une lecture KO → champs à `null` + `console.warn` sans PII : **la session s'écrit toujours**.
 - Suppression de lignes obsolètes (un doc qui disparaîtrait côté Dendreo) : **backlog** (rare ; on traite plus tard, pas en S2).
 
 ## 6. Format des dates (anti-bug fuseau) — DEUX cas distincts

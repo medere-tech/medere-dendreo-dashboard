@@ -31,11 +31,12 @@ export interface FinancementLine {
 
 /** Une facture de factures.php (vue minimale ; dates déjà en jour Paris naïf | null). */
 export interface FactureLine {
+  idFacture: string; // S15 : clé de départage du tri (deux factures, même date d'émission)
   idOpca: string; // 360 = ANDPC
   dateEnvoi: string | null;
   montantHt: number | null;
   datePaiement: string | null;
-  dateEmission: string | null; // gardé pour diagnostic (non utilisé par l'agrégation)
+  dateEmission: string | null; // S15 : porte l'ORDRE des factures (cf. splitFacturesAcheval)
 }
 
 /** Un lien inscription minimal (laps.php). */
@@ -117,6 +118,85 @@ export function aggregateFacturesAndpc(factures: readonly FactureLine[]): {
     montantHt: hts.length ? round2(hts.reduce((a, m) => a + m, 0)) : null,
     dateEnvoi: envois.length ? envois.reduce((min, d) => (d < min ? d : min)) : null, // plus ancienne (ISO → lexicographique)
     datePaiement: paiements.length ? paiements.reduce((max, d) => (d > max ? d : max)) : null, // plus récente
+  };
+}
+
+// --- S15 : FACTURE 1 / FACTURE 2 des sessions À CHEVAL -----------------------
+
+/** Les 4 champs S15. Tous null hors session à cheval (ou sans facture ANDPC). */
+export interface FacturesAchevalSplit {
+  facture1DateEnvoi: string | null;
+  facture1DatePaiement: string | null;
+  facture2DateEnvoi: string | null;
+  facture2DatePaiement: string | null;
+}
+
+const SPLIT_VIDE: FacturesAchevalSplit = {
+  facture1DateEnvoi: null,
+  facture1DatePaiement: null,
+  facture2DateEnvoi: null,
+  facture2DatePaiement: null,
+};
+
+/** "" ⇄ null : une date vide n'est jamais une date (même règle que l'agrégation). */
+const orNull = (d: string | null): string | null => (d === null || d === '' ? null : d);
+
+/**
+ * Ordre des factures ANDPC d'une session à cheval : `date_emission` CROISSANTE,
+ * départage `id_facture` croissant. Les dates sont déjà en jour Paris ("AAAA-MM-JJ")
+ * → la comparaison lexicographique EST la comparaison chronologique.
+ * Une facture SANS date d'émission ne peut pas être ordonnée : elle passe en DERNIER
+ * (jamais promue Facture 1 par défaut — on ne devine pas son année de budget).
+ */
+function compareFactures(a: FactureLine, b: FactureLine): number {
+  const ea = orNull(a.dateEmission) ?? '';
+  const eb = orNull(b.dateEmission) ?? '';
+  if (ea !== eb) {
+    if (ea === '') return 1;
+    if (eb === '') return -1;
+    return ea < eb ? -1 : 1;
+  }
+  const na = Number(a.idFacture);
+  const nb = Number(b.idFacture);
+  if (Number.isFinite(na) && Number.isFinite(nb) && na !== nb) return na - nb;
+  return a.idFacture.localeCompare(b.idFacture);
+}
+
+/**
+ * S15 — Facture 1 / Facture 2 d'une session À CHEVAL (demande Justine).
+ *
+ * RÈGLE PROUVÉE (recon sur 3246 et 3328) : le budget ANDPC est ANNUEL ; une session
+ * à cheval est facturée sur le budget de l'année de DÉBUT puis sur celui de l'année
+ * de FIN, et la facture du budget N est TOUJOURS émise avant celle du budget N+1.
+ * C'est donc l'ORDRE d'émission qui porte l'année de budget — aucun champ de la
+ * facture ne la donne (78 clés vérifiées : ni période, ni année, ni libellé).
+ * `date_envoi` n'est PAS discriminante (une facture 2025 peut être envoyée en 2026
+ * si des PS signent en retard) et peut même être vide sur une facture payée (3328).
+ *
+ * Périmètre STRICT :
+ *  - session NON à cheval → les 4 champs null (l'agrégat existant reste seul en place) ;
+ *  - à cheval, 0 facture ANDPC → 4 null ;
+ *  - à cheval, 1 seule facture ANDPC → Facture 1 remplie, Facture 2 null (garde-fou :
+ *    on ne fabrique JAMAIS une 2e facture) ;
+ *  - à cheval, > 2 factures ANDPC → seules les 2 premières alimentent les colonnes
+ *    (les suivantes restent dans l'agrégat `factureDateEnvoi`/`factureMontantHt`).
+ *
+ * N'AFFECTE PAS `factureMontantHt` (montant payé), inchangé par ce sprint.
+ */
+export function splitFacturesAcheval(
+  factures: readonly FactureLine[],
+  aCheval: boolean,
+): FacturesAchevalSplit {
+  if (!aCheval) return { ...SPLIT_VIDE };
+  const andpc = factures.filter((f) => f.idOpca === ANDPC_ID);
+  if (andpc.length === 0) return { ...SPLIT_VIDE };
+
+  const [f1, f2] = [...andpc].sort(compareFactures);
+  return {
+    facture1DateEnvoi: f1 ? orNull(f1.dateEnvoi) : null,
+    facture1DatePaiement: f1 ? orNull(f1.datePaiement) : null,
+    facture2DateEnvoi: f2 ? orNull(f2.dateEnvoi) : null,
+    facture2DatePaiement: f2 ? orNull(f2.datePaiement) : null,
   };
 }
 
@@ -216,6 +296,7 @@ async function readFactures(id: string, client: DendreoClient): Promise<FactureL
       const htRaw = f.montant_total_ht;
       const ht = htRaw == null || String(htRaw).trim() === '' ? null : parseMontant(htRaw);
       return {
+        idFacture: String(f.id_facture ?? ''),
         idOpca: String(f.id_opca ?? ''),
         dateEnvoi: toParisDay(f.date_envoi),
         montantHt: ht,
@@ -255,6 +336,11 @@ export interface FinancementEnrichment {
     factureDateEnvoi: string | null;
     factureMontantHt: number | null;
     factureDatePaiement: string | null;
+    // S15 — peuplés UNIQUEMENT si la session est à cheval (sinon null, cf. splitFacturesAcheval).
+    facture1DateEnvoi: string | null;
+    facture1DatePaiement: string | null;
+    facture2DateEnvoi: string | null;
+    facture2DatePaiement: string | null;
   };
   /** idParticipant → financeurAndpc (true|false|null) pour chaque SignatureDoc. */
   financeurByParticipant: Map<string, boolean | null>;
@@ -268,8 +354,16 @@ export interface FinancementEnrichment {
  * 3 lectures RÉSILIENTES (financements.php, factures.php, laps.php) + calcul pur.
  * Un échec de lecture → log SANS PII + valeurs vides : la session s'écrit TOUJOURS
  * (financeurAndpc=false, montants/dates null). On ne perd JAMAIS la session.
+ *
+ * `aCheval` vient de l'appelant (déjà calculé par `isACheval(dateDebut, dateFin)`,
+ * sync ET backfill) : le split S15 n'ajoute AUCUNE lecture Dendreo — il rejoue les
+ * factures déjà lues ici.
  */
-export async function enrichFinancement(idAdf: string | number, client: DendreoClient): Promise<FinancementEnrichment> {
+export async function enrichFinancement(
+  idAdf: string | number,
+  client: DendreoClient,
+  aCheval: boolean,
+): Promise<FinancementEnrichment> {
   const id = String(idAdf);
   const lines = await readFinancements(id, client);
   const factures = await readFactures(id, client);
@@ -283,6 +377,7 @@ export async function enrichFinancement(idAdf: string | number, client: DendreoC
       factureDateEnvoi: agg.dateEnvoi,
       factureMontantHt: agg.montantHt,
       factureDatePaiement: agg.datePaiement,
+      ...splitFacturesAcheval(factures, aCheval), // S15 — 0 lecture ajoutée
     },
     financeurByParticipant: buildFinanceurByParticipant(laps, lines),
     commercialIdByParticipant: buildCommercialIdByParticipant(laps),
