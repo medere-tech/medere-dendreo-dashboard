@@ -28,6 +28,8 @@ function sig(over: Partial<SignatureDoc> & { idParticipant: string; doctypeId: s
     sentDate: over.sentDate ?? '2026-06-01T08:00:00.000000Z',
     viewerUrl: over.viewerUrl ?? 'https://pro.dendreo.com/x/viewer',
     financeurAndpc: over.financeurAndpc ?? null,
+    assidu: over.assidu ?? null, // S14 (sans effet sur la vue "À relancer")
+    inscrit: over.inscrit ?? null, // S14
     sessionNumeroComplet: over.sessionNumeroComplet ?? 'ADF_20260001',
     sessionIntitule: over.sessionIntitule ?? 'Intitulé (signature)',
     sessionDateDebut: over.sessionDateDebut ?? '2026-01-01T00:00:00',

@@ -62,6 +62,8 @@ const sig = (idAdf: string, idParticipant: string, over: Partial<SignatureUpsert
   viewerUrl: null,
   financeurAndpc: null,
   commercial: null,
+  assidu: null, // S14
+  inscrit: null, // S14
   sessionNumeroComplet: `ADF_${idAdf}`,
   sessionIntitule: 'Session test',
   sessionDateDebut: '2026-01-01T00:00:00.000Z',
