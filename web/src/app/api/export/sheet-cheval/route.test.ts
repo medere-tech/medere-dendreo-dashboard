@@ -40,8 +40,18 @@ const rawSession = (idAdf: string, over: Record<string, unknown> = {}) => ({
   ...over,
 });
 const asDocs = (raws: object[]) => ({ docs: raws.map((r) => ({ data: () => r })) });
-const pending = (idAdf: string, idParticipant: string, nom: string, commercial?: string | null) => ({
+/** Personne pending PAR DÉFAUT GARDÉE par le filtre S14 : a suivi, inscrite, ANDPC.
+ *  `over` permet de casser un seul critère à la fois. */
+const pending = (
+  idAdf: string,
+  idParticipant: string,
+  nom: string,
+  commercial?: string | null,
+  over: Record<string, unknown> = {},
+) => ({
   idAdf, idParticipant, nom, ...(commercial === undefined ? {} : { commercial }),
+  assidu: true, inscrit: true, financeurAndpc: true, // S14 : profil "à relancer"
+  ...over,
 });
 
 const req = (auth?: string, query = ''): Request =>
@@ -108,7 +118,7 @@ describe('GET /api/export/sheet-cheval — contenu', () => {
     const GET = await freshRoute();
     await GET(req(`Bearer ${TOKEN}`, '?idAdfs=3196'));
     expect(whereSpy).toHaveBeenCalledWith('status', '==', 'pending');
-    expect(selectSpy).toHaveBeenCalledWith('idAdf', 'idParticipant', 'nom', 'commercial');
+    expect(selectSpy).toHaveBeenCalledWith('idAdf', 'idParticipant', 'nom', 'commercial', 'assidu', 'inscrit', 'financeurAndpc');
   });
 
   it('2 sessions → 1 ligne PAR PERSONNE pending, triées par idAdf puis Nom', async () => {
@@ -178,5 +188,74 @@ describe('GET /api/export/sheet-cheval — contenu', () => {
     await GET(req(`Bearer ${TOKEN}`, '?idAdfs=3196'));
     expect(getMock).toHaveBeenCalledTimes(1); // 2e servi par le cache
     expect(pendingGetMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+// --- S14 : ne garder que les PS qui ont SUIVI, NON désinscrits, financés ANDPC ---
+// Critères prouvés (scripts/recon-desinscrit-decode.mjs) : assidu = laps.presence==='OUI',
+// inscrit = laps.first_lam_inscrit_id non vide (vide = désinscrit).
+describe('GET /api/export/sheet-cheval — filtre S14 (a suivi + non désinscrit + ANDPC)', () => {
+  const noms = async (docs: object[]): Promise<string[]> => {
+    getMock.mockResolvedValue(asDocs([rawSession('3196')]));
+    pendingGetMock.mockResolvedValue(asDocs(docs));
+    const GET = await freshRoute();
+    const body = await (await GET(req(`Bearer ${TOKEN}`, '?idAdfs=3196'))).json();
+    return body.rows.map((r: string[]) => r[8]); // colonne Nom
+  };
+
+  it("n'a PAS fini ('INC.' → assidu false) → EXCLU", async () => {
+    expect(await noms([pending('3196', 'p1', 'David JACON', 'X Y', { assidu: false })])).toEqual([]);
+  });
+
+  it("no-show ('NON' → assidu false) → EXCLU", async () => {
+    expect(await noms([pending('3196', 'p2', 'Marc SZNAJDER', 'X Y', { assidu: false })])).toEqual([]);
+  });
+
+  it('DÉSINSCRIT (inscrit false) → EXCLU même si assidu true', async () => {
+    expect(await noms([pending('3196', 'p3', 'Prescillia IKOUEBE', 'X Y', { inscrit: false })])).toEqual([]);
+  });
+
+  it('hors-DPC / autofinancé (financeurAndpc false) → EXCLU', async () => {
+    expect(await noms([pending('3196', 'p4', 'Paul AUTOFI', 'X Y', { financeurAndpc: false })])).toEqual([]);
+  });
+
+  it('a suivi + inscrit + ANDPC → GARDÉ', async () => {
+    expect(await noms([pending('3196', 'p5', 'Alice DUPONT', 'X Y')])).toEqual(['Alice DUPONT']);
+  });
+
+  it('financeurAndpc null (aucun financement rattaché) → GARDÉ (on n\'exclut pas sur une absence d\'info)', async () => {
+    expect(await noms([pending('3196', 'p6', 'Nina SANSFI', 'X Y', { financeurAndpc: null })])).toEqual(['Nina SANSFI']);
+  });
+
+  it('doc pré-S14 (assidu/inscrit ABSENTS → null) → EXCLU (strict : jamais de ligne non vérifiée)', async () => {
+    const vieux = { idAdf: '3196', idParticipant: 'p7', nom: 'Vieux DOC', commercial: 'X Y' };
+    expect(await noms([vieux])).toEqual([]);
+  });
+
+  it('jeu MÉLANGÉ → seules les bonnes lignes sortent, tri par Nom conservé', async () => {
+    expect(await noms([
+      pending('3196', 'p1', 'Zoé MARTIN', 'X Y'), // OK
+      pending('3196', 'p2', 'David JACON', 'X Y', { assidu: false }), // pas fini
+      pending('3196', 'p3', 'Alice DUPONT', 'X Y'), // OK
+      pending('3196', 'p4', 'Prescillia IKOUEBE', 'X Y', { assidu: false, inscrit: false }), // désinscrite
+      pending('3196', 'p5', 'Paul AUTOFI', 'X Y', { financeurAndpc: false }), // hors-DPC
+      pending('3196', 'p6', 'Marc SZNAJDER', 'X Y', { assidu: false }), // no-show
+    ])).toEqual(['Alice DUPONT', 'Zoé MARTIN']);
+  });
+
+  it('toutes les personnes filtrées → session sans ligne (aucune ligne fantôme)', async () => {
+    getMock.mockResolvedValue(asDocs([rawSession('3196')]));
+    pendingGetMock.mockResolvedValue(asDocs([pending('3196', 'p1', 'David JACON', 'X Y', { assidu: false })]));
+    const GET = await freshRoute();
+    const body = await (await GET(req(`Bearer ${TOKEN}`, '?idAdfs=3196'))).json();
+    expect(body.rows).toEqual([]);
+    expect(body.headers).toEqual([...CHEVAL_SHEET_HEADERS]); // structure de sortie INCHANGÉE
+  });
+
+  it('dédup par participant conservée après filtrage (2 attestations pending → 1 ligne)', async () => {
+    expect(await noms([
+      pending('3196', 'p1', 'Alice DUPONT', 'X Y'),
+      pending('3196', 'p1', 'Alice DUPONT', 'X Y'),
+    ])).toEqual(['Alice DUPONT']);
   });
 });

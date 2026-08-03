@@ -136,6 +136,8 @@ export interface SignatureDoc {
   sentDate: string | null;
   viewerUrl: string | null;
   financeurAndpc: boolean | null; // S11.1 : true=ANDPC | false=autre financeur | null=aucun
+  assidu: boolean | null; // S14 : true=a suivi (presence 'OUI') | false='INC.'/'NON' | null=inconnu
+  inscrit: boolean | null; // S14 : true=inscrit à ≥1 module | false=DÉSINSCRIT | null=inconnu
   sessionNumeroComplet: string;
   sessionIntitule: string;
   sessionDateDebut: string;
@@ -156,6 +158,8 @@ export function toSignatureDoc(raw: DocumentData): SignatureDoc {
     sentDate: asNullableStr(raw.sentDate),
     viewerUrl: asNullableStr(raw.viewerUrl),
     financeurAndpc: asTriBool(raw.financeurAndpc),
+    assidu: asTriBool(raw.assidu), // S14 : doc pré-S14 (champ absent) → null, jamais false
+    inscrit: asTriBool(raw.inscrit), // S14 : idem
     sessionNumeroComplet: asStr(raw.sessionNumeroComplet),
     sessionIntitule: asStr(raw.sessionIntitule),
     sessionDateDebut: asStr(raw.sessionDateDebut),

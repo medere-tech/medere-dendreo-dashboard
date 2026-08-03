@@ -59,6 +59,8 @@ export interface SignatureDoc {
   viewerUrl: string | null;
   financeurAndpc: boolean | null; // S11.1 : true=ANDPC(360) | false=autre financeur | null=aucun financement rattaché
   commercial: string | null; // S13.1 : "Prénom NOM" du commercial de l'inscription (laps.commercial_id → administrateurs.php) ; null si absent/non résolu
+  assidu: boolean | null; // S14 : laps.presence==='OUI' (a suivi jusqu'au bout) | false ('INC.' pas fini, 'NON' no-show) | null=inconnu
+  inscrit: boolean | null; // S14 : laps.first_lam_inscrit_id non vide | false=DÉSINSCRIT (aucun module) | null=inconnu
   sessionNumeroComplet: string;
   sessionIntitule: string;
   sessionDateDebut: string;

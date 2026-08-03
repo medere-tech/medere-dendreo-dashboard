@@ -46,17 +46,37 @@ function isFresh(entry: { at: number } | undefined, now: number): boolean {
   return entry !== undefined && now - entry.at <= CACHE_TTL_MS;
 }
 
+/** true|false|null défensif (doc pré-S14 : champ absent → null, JAMAIS false). */
+const asTriBool = (v: unknown): boolean | null => (v === true ? true : v === false ? false : null);
+
+/**
+ * S14 — une personne pending n'apparaît dans l'onglet que si elle est utile à relancer :
+ *  - `assidu === true`  : a suivi la formation (laps.presence 'OUI'). Exclut 'INC.'
+ *    (commencé, pas fini) et 'NON' (no-show) ;
+ *  - `inscrit === true` : rattachée à ≥1 module. Exclut le DÉSINSCRIT (first_lam vide) ;
+ *  - `financeurAndpc !== false` : exclut l'autofinancé / hors-DPC. `null` (aucun
+ *    financement rattaché) est CONSERVÉ — on ne supprime pas une ligne sur une absence
+ *    d'information (même règle qu'en S11.1).
+ * `assidu`/`inscrit` sont STRICTS : `null` (inconnu, ou doc écrit avant S14) exclut.
+ * ⚠ Conséquence opérationnelle : tant que le backfill S14 n'est pas repassé, aucun doc
+ * ne porte ces champs → l'onglet sort VIDE. C'est voulu (mieux vide que faux).
+ */
+function estARelancer(s: Record<string, unknown>): boolean {
+  return asTriBool(s.assidu) === true && asTriBool(s.inscrit) === true && asTriBool(s.financeurAndpc) !== false;
+}
+
 /**
  * Toutes les attestations PENDING → Map<idAdf, Map<idParticipant, PendingPerson>>.
  * `where('status','==','pending')` (index simple auto, pas d'orderBy). La Map interne
  * est clé par `idParticipant` → DÉDUPLIQUE : une personne avec plusieurs attestations
  * pending (EPP amont/aval, PI) ne donne qu'UNE ligne. `commercial` vide → null.
+ * Filtre S14 appliqué AVANT l'insertion (cf. `estARelancer`).
  */
 async function readPendingByAdf(): Promise<PendingByAdf> {
   const snap = await getDb()
     .collection('signatures')
     .where('status', '==', 'pending')
-    .select('idAdf', 'idParticipant', 'nom', 'commercial') // S13.1 : +commercial
+    .select('idAdf', 'idParticipant', 'nom', 'commercial', 'assidu', 'inscrit', 'financeurAndpc') // S13.1 +S14
     .get();
   const byAdf = new Map<string, Map<string, PendingPerson>>();
   for (const d of snap.docs) {
@@ -64,6 +84,7 @@ async function readPendingByAdf(): Promise<PendingByAdf> {
     const idAdf = String(s.idAdf ?? '');
     const idParticipant = String(s.idParticipant ?? '');
     if (!idAdf || !idParticipant) continue; // non rattachable → ignoré (jamais de ligne fantôme)
+    if (!estARelancer(s)) continue; // S14 : pas fini / no-show / désinscrit / hors-DPC
     let parSession = byAdf.get(idAdf);
     if (!parSession) {
       parSession = new Map<string, PendingPerson>();

@@ -43,6 +43,20 @@ export interface LapLink {
   idParticipant: string;
   idEntreprise: string; // laps.id_entreprise
   commercialId: string; // laps.commercial_id (S13.1) — commercial de l'INSCRIPTION ; '' si absent
+  presence: string; // laps.presence (S14) — 'OUI' | 'INC.' | 'NON' ; '' si absent
+  firstLamInscritId: string; // laps.first_lam_inscrit_id (S14) — '' = AUCUN module = désinscrit
+}
+
+/**
+ * Parcours d'une personne sur une session (S14). Champs PROUVÉS sur cas réels
+ * (recon-desinscrit-decode : IKOUEBE/3095 désinscrite, JACON+CADIER/3129 non finis) :
+ *  - `laps.presence` vaut 'OUI' (a suivi) | 'INC.' (commencé, pas fini) | 'NON' (0 %) ;
+ *  - `laps.first_lam_inscrit_id` VIDE = inscrite à aucun module = DÉSINSCRITE.
+ * `lap_status_id` est INUTILISABLE : il vaut '2' pour tout le monde, y compris la désinscrite.
+ */
+export interface ParcoursFlags {
+  assidu: boolean; // presence === 'OUI' — 'INC.' et 'NON' → false
+  inscrit: boolean; // first_lam_inscrit_id non vide
 }
 
 // --- Helpers purs -----------------------------------------------------------
@@ -148,6 +162,23 @@ export function buildCommercialIdByParticipant(laps: readonly LapLink[]): Map<st
   return out;
 }
 
+/**
+ * idParticipant → { assidu, inscrit } (S14), depuis les MÊMES laps déjà lus (0 lecture
+ * ajoutée, comme commercial_id). PURE. Un participant ABSENT de la map (laps.php KO,
+ * ou aucune inscription) → le mapper écrit null/null : on ne prétend jamais savoir.
+ */
+export function buildParcoursByParticipant(laps: readonly LapLink[]): Map<string, ParcoursFlags> {
+  const out = new Map<string, ParcoursFlags>();
+  for (const lap of laps) {
+    if (!lap.idParticipant) continue;
+    out.set(lap.idParticipant, {
+      assidu: lap.presence.trim().toUpperCase() === 'OUI',
+      inscrit: lap.firstLamInscritId.trim() !== '',
+    });
+  }
+  return out;
+}
+
 // --- I/O RÉSILIENTE : enrichissement partagé backfill + sync ----------------
 
 function asArray<T = unknown>(json: unknown): T[] {
@@ -206,6 +237,8 @@ async function readLaps(id: string, client: DendreoClient): Promise<LapLink[]> {
         idParticipant: String(l.id_participant ?? ''),
         idEntreprise: String(l.id_entreprise ?? ''),
         commercialId: String(l.commercial_id ?? ''), // S13.1 : même objet lap, 0 lecture ajoutée
+        presence: String(l.presence ?? ''), // S14 : idem, même objet lap
+        firstLamInscritId: String(l.first_lam_inscrit_id ?? ''), // S14 : idem
       }))
       .filter((x) => x.idParticipant !== '');
   } catch (err) {
@@ -227,6 +260,8 @@ export interface FinancementEnrichment {
   financeurByParticipant: Map<string, boolean | null>;
   /** idParticipant → commercial_id de l'inscription (S13.1) ; à résoudre en NOM via le référentiel. */
   commercialIdByParticipant: Map<string, string>;
+  /** idParticipant → { assidu, inscrit } (S14) ; absent de la map → null/null côté mapper. */
+  parcoursByParticipant: Map<string, ParcoursFlags>;
 }
 
 /**
@@ -251,6 +286,7 @@ export async function enrichFinancement(idAdf: string | number, client: DendreoC
     },
     financeurByParticipant: buildFinanceurByParticipant(laps, lines),
     commercialIdByParticipant: buildCommercialIdByParticipant(laps),
+    parcoursByParticipant: buildParcoursByParticipant(laps),
   };
 }
 

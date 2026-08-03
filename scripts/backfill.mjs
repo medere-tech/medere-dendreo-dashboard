@@ -193,7 +193,7 @@ async function enrichWithModules(session) {
 }
 
 // entry = AttestationLine (dates déjà normalisées ISO|null par signatures.ts).
-function mapSig(a, session, financeurAndpc, commercial) {
+function mapSig(a, session, financeurAndpc, commercial, parcours) {
   return {
     idAdf: session.idAdf,
     idParticipant: String(a.idParticipant),
@@ -206,6 +206,8 @@ function mapSig(a, session, financeurAndpc, commercial) {
     viewerUrl: a.viewerUrl ?? null,
     financeurAndpc: financeurAndpc ?? null, // S11.1 : true=ANDPC | false=autre | null=aucun
     commercial: commercial ?? null, // S13.1 : "Prénom NOM" du commercial de l'inscription
+    assidu: parcours ? parcours.assidu : null, // S14 : laps absent/KO → null (inconnu), jamais false
+    inscrit: parcours ? parcours.inscrit : null, // S14 : idem
     sessionNumeroComplet: session.numeroComplet,
     sessionIntitule: session.intitule,
     sessionDateDebut: session.dateDebut,
@@ -291,9 +293,12 @@ async function processSession(session) {
         await upsertSession(session); // la SESSION s'écrit TOUJOURS (avant les lignes)
         for (const a of st.attestations) {
           try {
-            const commercialId = fin.commercialIdByParticipant.get(String(a.idParticipant));
+            const idp = String(a.idParticipant);
+            const commercialId = fin.commercialIdByParticipant.get(idp);
             const commercial = commercialId ? commerciauxRef.get(commercialId) ?? null : null;
-            await upsertSignature(mapSig(a, session, fin.financeurByParticipant.get(String(a.idParticipant)) ?? null, commercial));
+            await upsertSignature(
+              mapSig(a, session, fin.financeurByParticipant.get(idp) ?? null, commercial, fin.parcoursByParticipant.get(idp)),
+            );
           } catch (lineErr) {
             if (isQuotaError(lineErr)) throw lineErr; // quota → remonte (arrêt propre)
             ignoredLines += 1; // une ligne KO n'abat JAMAIS la session : on l'ignore + compte

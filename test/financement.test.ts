@@ -11,6 +11,7 @@ import {
   aggregateFacturesAndpc,
   buildFinanceurByParticipant,
   buildCommercialIdByParticipant,
+  buildParcoursByParticipant,
   enrichFinancement,
   loadCommerciauxReferentiel,
   __resetCommerciauxReferentiel,
@@ -136,9 +137,9 @@ describe('aggregateFacturesAndpc — S13.3 : dépôt (TOUTES) vs paiement (PAYÉ
 
 describe('buildFinanceurByParticipant (chaîne idParticipant → id_entreprise → financeur)', () => {
   const laps: LapLink[] = [
-    { idParticipant: 'p1', idEntreprise: 'e1', commercialId: '' }, // ANDPC
-    { idParticipant: 'p2', idEntreprise: 'e2', commercialId: '' }, // particulier
-    { idParticipant: 'p3', idEntreprise: 'e3', commercialId: '' }, // aucun financement
+    { idParticipant: 'p1', idEntreprise: 'e1', commercialId: '', presence: 'OUI', firstLamInscritId: '6020' }, // ANDPC
+    { idParticipant: 'p2', idEntreprise: 'e2', commercialId: '', presence: 'OUI', firstLamInscritId: '6020' }, // particulier
+    { idParticipant: 'p3', idEntreprise: 'e3', commercialId: '', presence: 'OUI', firstLamInscritId: '6020' }, // aucun financement
   ];
   const lines: FinancementLine[] = [
     fin('e1', ANDPC_ID, 'opca', 500),
@@ -170,8 +171,10 @@ describe('enrichFinancement — résilience (échec d\'une lecture)', () => {
     { id_opca: ANDPC_ID, date_envoi: '2026-05-11 00:00:00', montant_total_ht: '800.00', date_paiement: '2026-05-20 00:00:00', date_emission: '2026-05-11 00:00:00' },
   ];
   const LAPS = [
-    { id_participant: 'p1', id_entreprise: 'e1', commercial_id: '48' }, // ANDPC + commercial 48 (réel S13.0)
-    { id_participant: 'p2', id_entreprise: 'e2' }, // particulier, PAS de commercial_id
+    // ANDPC + commercial 48 (réel S13.0) + a suivi jusqu'au bout (S14)
+    { id_participant: 'p1', id_entreprise: 'e1', commercial_id: '48', presence: 'OUI', first_lam_inscrit_id: '6020' },
+    // particulier, PAS de commercial_id, commencé mais pas fini (S14)
+    { id_participant: 'p2', id_entreprise: 'e2', presence: 'INC.', first_lam_inscrit_id: '6056' },
   ];
   const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200 });
 
@@ -196,6 +199,9 @@ describe('enrichFinancement — résilience (échec d\'une lecture)', () => {
     // S13.1 : commercial_id extrait des MÊMES laps (coût 0). p2 sans commercial_id → absent.
     expect(r.commercialIdByParticipant.get('p1')).toBe('48');
     expect(r.commercialIdByParticipant.has('p2')).toBe(false);
+    // S14 : assiduité/inscription extraites des MÊMES laps (coût 0).
+    expect(r.parcoursByParticipant.get('p1')).toEqual({ assidu: true, inscrit: true });
+    expect(r.parcoursByParticipant.get('p2')).toEqual({ assidu: false, inscrit: true }); // 'INC.' → exclu de l'onglet
   });
 
   it('échec factures.php → champs facture null, le RESTE intact', async () => {
@@ -217,6 +223,7 @@ describe('enrichFinancement — résilience (échec d\'une lecture)', () => {
     expect(r.session.factureMontantHt).toBe(800);
     expect(r.financeurByParticipant.size).toBe(0); // aucun lien → chaque pending sera null côté mapper
     expect(r.commercialIdByParticipant.size).toBe(0); // laps KO → aucun commercial_id (commercial=null)
+    expect(r.parcoursByParticipant.size).toBe(0); // S14 : laps KO → assidu/inscrit null (jamais false)
     warn.mockRestore();
   });
 
@@ -236,12 +243,53 @@ describe('enrichFinancement — résilience (échec d\'une lecture)', () => {
 describe('buildCommercialIdByParticipant (idParticipant → commercial_id, depuis les laps déjà lus)', () => {
   it('mappe le commercial_id présent, IGNORE l\'inscription sans commercial_id', () => {
     const laps: LapLink[] = [
-      { idParticipant: 'p1', idEntreprise: 'e1', commercialId: '48' },
-      { idParticipant: 'p2', idEntreprise: 'e2', commercialId: '' }, // absent → non mappé
+      { idParticipant: 'p1', idEntreprise: 'e1', commercialId: '48', presence: 'OUI', firstLamInscritId: '6020' },
+      { idParticipant: 'p2', idEntreprise: 'e2', commercialId: '', presence: 'OUI', firstLamInscritId: '6020' }, // absent → non mappé
     ];
     const m = buildCommercialIdByParticipant(laps);
     expect(m.get('p1')).toBe('48');
     expect(m.has('p2')).toBe(false); // → commercial null côté mapper
+  });
+});
+
+// --- S14 : assiduité + désinscription par personne ---------------------------
+// Valeurs PROUVÉES sur cas réels (scripts/recon-desinscrit-decode.mjs) :
+//   IKOUEBE/3095 désinscrite → presence 'NON' + first_lam_inscrit_id ''
+//   JACON+CADIER/3129 pas finis → presence 'INC.' (26,92 % / 31,41 %), first_lam '6056'
+describe('buildParcoursByParticipant (S14 : idParticipant → { assidu, inscrit })', () => {
+  const lap = (idParticipant: string, presence: string, firstLamInscritId: string): LapLink =>
+    ({ idParticipant, idEntreprise: 'e1', commercialId: '', presence, firstLamInscritId });
+
+  it("presence 'OUI' → assidu true (a suivi jusqu'au bout)", () => {
+    expect(buildParcoursByParticipant([lap('p1', 'OUI', '6020')]).get('p1')).toEqual({ assidu: true, inscrit: true });
+  });
+
+  it("presence 'INC.' → assidu FALSE (commencé, pas fini) — cas JACON/CADIER", () => {
+    expect(buildParcoursByParticipant([lap('p1', 'INC.', '6056')]).get('p1')).toEqual({ assidu: false, inscrit: true });
+  });
+
+  it("presence 'NON' → assidu FALSE (no-show)", () => {
+    expect(buildParcoursByParticipant([lap('p1', 'NON', '6020')]).get('p1')).toEqual({ assidu: false, inscrit: true });
+  });
+
+  it('first_lam_inscrit_id VIDE → inscrit false (DÉSINSCRIT) — cas IKOUEBE', () => {
+    expect(buildParcoursByParticipant([lap('p1', 'NON', '')]).get('p1')).toEqual({ assidu: false, inscrit: false });
+  });
+
+  it('first_lam_inscrit_id rempli → inscrit true', () => {
+    expect(buildParcoursByParticipant([lap('p1', 'INC.', '6056')]).get('p1')!.inscrit).toBe(true);
+  });
+
+  it('participant ABSENT des laps → aucune entrée (le mapper écrira null/null, jamais false)', () => {
+    const m = buildParcoursByParticipant([lap('p1', 'OUI', '6020')]);
+    expect(m.has('p9')).toBe(false);
+    expect(m.get('p9')).toBeUndefined();
+  });
+
+  it('tolère espaces et casse sur presence ; lap sans idParticipant ignoré', () => {
+    const m = buildParcoursByParticipant([lap('p1', ' oui ', ' 6020 '), lap('', 'OUI', '6020')]);
+    expect(m.get('p1')).toEqual({ assidu: true, inscrit: true });
+    expect(m.size).toBe(1);
   });
 });
 
