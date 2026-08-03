@@ -51,18 +51,47 @@ function nullableTrim(v: unknown): string | null {
   return s === '' ? null : s;
 }
 
-async function etapeLabel(client: DendreoClient, idEtape: string): Promise<string> {
-  if (!idEtape) return 'etape_?';
+// --- Référentiel des étapes (S14.2 ; une lecture, mise en cache) -------------
+let etapesCache: Map<string, string> | null = null;
+
+/**
+ * Référentiel des étapes : `etapes.php` lu UNE seule fois par exécution → Map
+ * <id_etape_process, libellé>. Même pattern que `loadCommerciauxReferentiel` /
+ * `ensureAndpcValidated` (cache module). Le référentiel des étapes ne bouge quasiment
+ * jamais ; le relire à chaque session coûtait 1 appel Dendreo par syncSession (webhook
+ * ET scripts) pour une valeur identique.
+ *
+ * RÉSILIENCE : on ne met en cache QUE le succès. Une lecture KO renvoie une Map vide
+ * SANS la mémoriser → la session suivante retentera, exactement comme avant ce cache
+ * (aucune régression : un incident passager ne fige pas les libellés de tout le process).
+ */
+async function loadEtapesReferentiel(client: DendreoClient): Promise<Map<string, string>> {
+  if (etapesCache !== null) return etapesCache;
+  const map = new Map<string, string>();
   try {
     const json = await client.get<unknown>('etapes.php');
     for (const e of asArray<Record<string, unknown>>(json)) {
       const id = String(e.id_etape_process ?? e.id ?? '');
-      if (id === idEtape) return String(e.intitule ?? e.nom ?? `etape_${idEtape}`);
+      if (id) map.set(id, String(e.intitule ?? e.nom ?? `etape_${id}`));
     }
   } catch {
-    /* non bloquant : on retombe sur un libellé neutre */
+    return map; // NON mis en cache : on retentera à la prochaine session (comportement d'avant)
   }
-  return `etape_${idEtape}`;
+  etapesCache = map;
+  return etapesCache;
+}
+
+/** Libellé d'étape, depuis le référentiel en cache. Libellés STRICTEMENT identiques à
+ *  avant : id vide → "etape_?" ; id inconnu du référentiel ou lecture KO → "etape_{id}". */
+async function etapeLabel(client: DendreoClient, idEtape: string): Promise<string> {
+  if (!idEtape) return 'etape_?';
+  const referentiel = await loadEtapesReferentiel(client);
+  return referentiel.get(idEtape) ?? `etape_${idEtape}`;
+}
+
+/** Réinitialise le cache du référentiel étapes (usage tests uniquement). */
+export function __resetEtapesReferentiel(): void {
+  etapesCache = null;
 }
 
 /** LAM d'une session : 1 lecture — `include=module,creneaux` porte modules ET créneaux
