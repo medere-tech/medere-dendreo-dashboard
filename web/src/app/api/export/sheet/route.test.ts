@@ -540,3 +540,99 @@ describe('GET /api/export/sheet — filtres andpcOnly & avecCompteProduit', () =
     expect(getMock).toHaveBeenCalledTimes(4);
   });
 });
+
+// --- S16 : filtre achevalOnly -----------------------------------------------
+describe('GET /api/export/sheet — filtre ?achevalOnly', () => {
+  const TODAY = '2999-12-31'; // borne haute neutre
+  const ids = (body: { rows: string[][] }) => body.rows.map((r) => r[0]);
+  // Une session à cheval : commence en 2025, finit en 2026 (c'est tout le point du filtre).
+  const CHEVAL = { ...rawWith('cheval', '2026-02-20T23:59:59'), dateDebut: '2025-11-10T00:00:00', aCheval: true };
+  const NORMALE = { ...rawWith('normale', '2026-05-10T00:00:00'), dateDebut: '2026-01-09T00:00:00', aCheval: false };
+
+  beforeEach(() => {
+    getMock.mockReset();
+    getMock.mockResolvedValue(asDocs([CHEVAL, NORMALE]));
+    process.env.SHEET_EXPORT_TOKEN = TOKEN;
+    setToday(TODAY);
+  });
+
+  it('sans achevalOnly → comportement INCHANGÉ (toutes les sessions)', async () => {
+    const GET = await freshRoute();
+    const body = await (await GET(req(`Bearer ${TOKEN}`))).json();
+    expect(ids(body)).toEqual(['cheval', 'normale']);
+  });
+
+  it('achevalOnly=1 → uniquement aCheval===true', async () => {
+    const GET = await freshRoute();
+    const body = await (await GET(req(`Bearer ${TOKEN}`, '?achevalOnly=1'))).json();
+    expect(ids(body)).toEqual(['cheval']);
+  });
+
+  it('achevalOnly=1 NEUTRALISE debutFrom (la session à cheval débute en 2025)', async () => {
+    const GET = await freshRoute();
+    // debutFrom=2026-01-01 exclurait 'cheval' (débute le 2025-11-10)… sauf sous achevalOnly.
+    const body = await (await GET(req(`Bearer ${TOKEN}`, '?achevalOnly=1&debutFrom=2026-01-01'))).json();
+    expect(ids(body)).toEqual(['cheval']);
+  });
+
+  it('sans achevalOnly, debutFrom s\'applique toujours normalement (non-régression)', async () => {
+    const GET = await freshRoute();
+    const body = await (await GET(req(`Bearer ${TOKEN}`, '?debutFrom=2026-01-01'))).json();
+    expect(ids(body)).toEqual(['normale']); // 'cheval' (début 2025) exclue comme avant
+  });
+
+  it('debutFrom invalide → 400 même avec achevalOnly=1 (validation inchangée)', async () => {
+    const GET = await freshRoute();
+    const res = await GET(req(`Bearer ${TOKEN}`, '?achevalOnly=1&debutFrom=2026-1-1'));
+    expect(res.status).toBe(400);
+    expect(getMock).not.toHaveBeenCalled();
+  });
+
+  it('achevalOnly=1 + finFrom : la borne basse dateFin CONTINUE de s\'appliquer', async () => {
+    const AUTRE_CHEVAL = { ...rawWith('cheval2', '2026-08-15T00:00:00'), dateDebut: '2025-12-01T00:00:00', aCheval: true };
+    getMock.mockResolvedValue(asDocs([CHEVAL, AUTRE_CHEVAL, NORMALE]));
+    const GET = await freshRoute();
+    const body = await (await GET(req(`Bearer ${TOKEN}`, '?achevalOnly=1&finFrom=2026-06-01'))).json();
+    expect(ids(body)).toEqual(['cheval2']); // 'cheval' (fin février) exclue par finFrom
+  });
+
+  it('achevalOnly=1 + andpcOnly / avecCompteProduit : ces filtres CONTINUENT de s\'appliquer', async () => {
+    getMock.mockResolvedValue(asDocs([
+      { ...CHEVAL, idAdf: 'ok', financeurAndpc: true, numeroCompteProduit: '92622525478' },
+      { ...CHEVAL, idAdf: 'sansAndpc', financeurAndpc: false, numeroCompteProduit: '92622525478' },
+      { ...CHEVAL, idAdf: 'sansCp', financeurAndpc: true, numeroCompteProduit: '' },
+    ]));
+    const GET = await freshRoute();
+    const body = await (
+      await GET(req(`Bearer ${TOKEN}`, '?achevalOnly=1&andpcOnly=1&avecCompteProduit=1'))
+    ).json();
+    expect(ids(body)).toEqual(['ok']);
+  });
+
+  it('achevalOnly=1 : l\'exclusion "Échec" et la borne haute restent appliquées', async () => {
+    setToday('2026-07-10');
+    getMock.mockResolvedValue(asDocs([
+      { ...CHEVAL, idAdf: 'chevalEchec', etape: 'Échec' },
+      { ...rawWith('chevalFuture', '2026-09-01T00:00:00'), dateDebut: '2025-12-01T00:00:00', aCheval: true },
+      CHEVAL,
+    ]));
+    const GET = await freshRoute();
+    const body = await (await GET(req(`Bearer ${TOKEN}`, '?achevalOnly=1'))).json();
+    expect(ids(body)).toEqual(['cheval']);
+  });
+
+  it('achevalOnly fait partie de la CLÉ DE CACHE : clé distincte, puis re-servi', async () => {
+    const GET = await freshRoute();
+    await GET(req(`Bearer ${TOKEN}`)); // clé de base
+    await GET(req(`Bearer ${TOKEN}`, '?achevalOnly=1')); // clé ≠ → nouvelle lecture
+    expect(getMock).toHaveBeenCalledTimes(2);
+    await GET(req(`Bearer ${TOKEN}`, '?achevalOnly=1')); // re-servi par le cache
+    expect(getMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('achevalOnly=0 ou valeur autre que "1" → filtre INACTIF (comme les autres flags)', async () => {
+    const GET = await freshRoute();
+    const body = await (await GET(req(`Bearer ${TOKEN}`, '?achevalOnly=0'))).json();
+    expect(ids(body)).toEqual(['cheval', 'normale']);
+  });
+});

@@ -25,6 +25,10 @@ import { todayInParis } from '@/lib/time';
  *  - `?andpcOnly=1`          → ne garde que les sessions `financeurAndpc === true` ;
  *  - `?avecCompteProduit=1`  → ne garde que celles dont `numeroCompteProduit` est non vide
  *    (retire les formations sans audit type AFGSU).
+ * Filtre S16 (optionnel, défaut = inactif → rétrocompatible) :
+ *  - `?achevalOnly=1`        → ne garde que les sessions `aCheval === true` ET NEUTRALISE
+ *    `debutFrom` (une session à cheval commence en 2025 : une borne basse calée sur 2026
+ *    les éliminerait toutes). Tous les AUTRES filtres passés continuent de s'appliquer.
  * Dates sur `dateFin`, jour Paris naïf `slice(0,10)`, jamais d'UTC.
  * Lignes triées par `dateFin` CROISSANTE (plus anciennes d'abord ; égalité →
  * `numeroComplet` pour un ordre déterministe).
@@ -83,6 +87,7 @@ interface Filters {
   debutFrom: string | null; // dateDebut >= debutFrom (S11.2)
   andpcOnly: boolean; // financeurAndpc === true (S11.2)
   avecCompteProduit: boolean; // numeroCompteProduit non vide (S11.2)
+  achevalOnly: boolean; // aCheval === true, et debutFrom neutralisé (S16)
 }
 
 function isFresh(entry: { at: number } | undefined, now: number): boolean {
@@ -159,7 +164,10 @@ async function buildPayload(filters: Filters, today: string, now: number): Promi
       const fin = s.dateFin.slice(0, 10);
       if (fin > today) return false; // borne haute = aujourd'hui Paris (TOUJOURS)
       if (filters.finFrom && fin < filters.finFrom) return false; // borne basse dateFin
-      if (filters.debutFrom && s.dateDebut.slice(0, 10) < filters.debutFrom) return false; // borne basse dateDebut (S11.2)
+      if (filters.achevalOnly && !s.aCheval) return false; // sessions à cheval uniquement (S16)
+      // S16 : `debutFrom` est NEUTRALISÉ sous achevalOnly — une session à cheval commence
+      // en 2025, donc une borne basse sur `dateDebut` (calée sur 2026) les éliminerait toutes.
+      if (!filters.achevalOnly && filters.debutFrom && s.dateDebut.slice(0, 10) < filters.debutFrom) return false; // borne basse dateDebut (S11.2)
       if (filters.andpcOnly && s.financeurAndpc !== true) return false; // ANDPC uniquement (S11.2)
       if (filters.avecCompteProduit && !(s.numeroCompteProduit && s.numeroCompteProduit.trim() !== '')) return false; // compte produit requis (S11.2)
       return true;
@@ -203,13 +211,14 @@ export async function GET(req: Request): Promise<Response> {
   }
   const andpcOnly = params.get('andpcOnly') === '1';
   const avecCompteProduit = params.get('avecCompteProduit') === '1';
-  const filters: Filters = { finFrom, debutFrom, andpcOnly, avecCompteProduit };
+  const achevalOnly = params.get('achevalOnly') === '1'; // S16
+  const filters: Filters = { finFrom, debutFrom, andpcOnly, avecCompteProduit, achevalOnly };
 
   try {
     const today = todayInParis(); // recalculé chaque requête → jamais codé en dur
     // Clé de cache = TOUS les filtres + le jour : un appel filtré ne sert jamais un cache
     // d'un autre filtre, et le changement de jour (borne haute) invalide naturellement.
-    const key = `${finFrom ?? 'all'}|${debutFrom ?? 'all'}|${andpcOnly ? '1' : '0'}|${avecCompteProduit ? '1' : '0'}|${today}`;
+    const key = `${finFrom ?? 'all'}|${debutFrom ?? 'all'}|${andpcOnly ? '1' : '0'}|${avecCompteProduit ? '1' : '0'}|${achevalOnly ? '1' : '0'}|${today}`;
     const now = Date.now();
     const hit = cache.get(key);
     if (!isFresh(hit, now)) {
