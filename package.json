@@ -11,6 +11,8 @@
     "inspect-etapes": "tsx scripts/inspect-etapes.mjs",
     "inspect-relance": "tsx scripts/inspect-relance.mjs",
     "verify-dates": "tsx scripts/verify-dates-synchrones.mjs",
+    "recon-commercial": "tsx scripts/recon-commercial.mjs",
+    "verify-commercial": "tsx scripts/verify-commercial.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -36,6 +38,6 @@
   },
   "overrides": {
     "uuid": "^11.1.1",
-    "brace-expansion": ">=5.0.8"
+    "brace-expansion": ">=5.0.9"
   }
 }
