@@ -25,10 +25,14 @@ import { todayInParis } from '@/lib/time';
  *  - `?andpcOnly=1`          → ne garde que les sessions `financeurAndpc === true` ;
  *  - `?avecCompteProduit=1`  → ne garde que celles dont `numeroCompteProduit` est non vide
  *    (retire les formations sans audit type AFGSU).
- * Filtre S16 (optionnel, défaut = inactif → rétrocompatible) :
- *  - `?achevalOnly=1`        → ne garde que les sessions `aCheval === true` ET NEUTRALISE
- *    `debutFrom` (une session à cheval commence en 2025 : une borne basse calée sur 2026
- *    les éliminerait toutes). Tous les AUTRES filtres passés continuent de s'appliquer.
+ * Filtre « à cheval » (S16.1, optionnel, défaut = inactif → rétrocompatible) :
+ *  - `?debutYear=AAAA`       → critère PRÉCIS et AUTO-SUFFISANT : `dateDebut` dans l'année
+ *    `debutYear` ET `dateFin` dans `debutYear + 1`. `debutYear=2025` ne renvoie donc QUE
+ *    les sessions 2025→2026 (exclut 2024→2025 et les sessions entièrement en 2025).
+ *    C'est le SEUL activateur du mode cheval : il implique « à cheval » à lui seul.
+ *  Ce mode NEUTRALISE `debutFrom` (une session à cheval commence l'année d'avant : une
+ *  borne basse sur `dateDebut` calée sur l'année de fin les éliminerait toutes). Tous les
+ *  AUTRES filtres passés continuent de s'appliquer normalement.
  * Dates sur `dateFin`, jour Paris naïf `slice(0,10)`, jamais d'UTC.
  * Lignes triées par `dateFin` CROISSANTE (plus anciennes d'abord ; égalité →
  * `numeroComplet` pour un ordre déterministe).
@@ -55,6 +59,8 @@ interface SheetPayload {
 
 /** Jour Paris naïf AAAA-MM-JJ (mêmes dates que `dateDebut/dateFin`, sans conversion UTC). */
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+/** Année AAAA (S16.1) — validée AVANT toute lecture Firestore, comme les dates. */
+const YEAR_RE = /^\d{4}$/;
 
 // Cache mémoire (module-level) ~60s, PAR CLÉ `${finFrom ?? 'all'}|${aujourdhuiParis}`.
 // Voie la PLUS SIMPLE (pas de coopération du client, pas de header à respecter) :
@@ -87,7 +93,25 @@ interface Filters {
   debutFrom: string | null; // dateDebut >= debutFrom (S11.2)
   andpcOnly: boolean; // financeurAndpc === true (S11.2)
   avecCompteProduit: boolean; // numeroCompteProduit non vide (S11.2)
-  achevalOnly: boolean; // aCheval === true, et debutFrom neutralisé (S16)
+  debutYear: string | null; // année(dateDebut) === debutYear ET année(dateFin) === +1 (S16.1)
+}
+
+/** Le mode « à cheval » est actif → `debutFrom` ne s'applique pas (S16.1). */
+function isModeCheval(f: Filters): boolean {
+  return f.debutYear !== null;
+}
+
+/**
+ * S16.1 — Chevauchement STRICT d'une année vers la SUIVANTE : `dateDebut` dans l'année
+ * `debutYear` ET `dateFin` dans `debutYear + 1`. À lui seul, ce critère IMPLIQUE « à
+ * cheval », et il est strictement plus précis qu'un simple `aCheval === true` (qui
+ * accepterait n'importe quel chevauchement — 2024→2025 comme 2025→2026).
+ * Années lues sur le jour Paris naïf (`slice(0,4)`), JAMAIS en UTC, comme le reste.
+ * debutYear=2025 → garde 2025→2026 ; exclut 2024→2025 ET 2025→2025 (même année).
+ */
+function estChevalVersAnneeSuivante(s: SessionDoc, debutYear: string): boolean {
+  const finYear = String(Number(debutYear) + 1);
+  return s.dateDebut.slice(0, 4) === debutYear && s.dateFin.slice(0, 4) === finYear;
 }
 
 function isFresh(entry: { at: number } | undefined, now: number): boolean {
@@ -164,10 +188,11 @@ async function buildPayload(filters: Filters, today: string, now: number): Promi
       const fin = s.dateFin.slice(0, 10);
       if (fin > today) return false; // borne haute = aujourd'hui Paris (TOUJOURS)
       if (filters.finFrom && fin < filters.finFrom) return false; // borne basse dateFin
-      if (filters.achevalOnly && !s.aCheval) return false; // sessions à cheval uniquement (S16)
-      // S16 : `debutFrom` est NEUTRALISÉ sous achevalOnly — une session à cheval commence
-      // en 2025, donc une borne basse sur `dateDebut` (calée sur 2026) les éliminerait toutes.
-      if (!filters.achevalOnly && filters.debutFrom && s.dateDebut.slice(0, 10) < filters.debutFrom) return false; // borne basse dateDebut (S11.2)
+      if (filters.debutYear && !estChevalVersAnneeSuivante(s, filters.debutYear)) return false; // année X → X+1 (S16.1)
+      // S16.1 : `debutFrom` est NEUTRALISÉ en mode cheval — une session à cheval commence
+      // l'année d'AVANT, donc une borne basse sur `dateDebut` (calée sur l'année de fin)
+      // les éliminerait toutes.
+      if (!isModeCheval(filters) && filters.debutFrom && s.dateDebut.slice(0, 10) < filters.debutFrom) return false; // borne basse dateDebut (S11.2)
       if (filters.andpcOnly && s.financeurAndpc !== true) return false; // ANDPC uniquement (S11.2)
       if (filters.avecCompteProduit && !(s.numeroCompteProduit && s.numeroCompteProduit.trim() !== '')) return false; // compte produit requis (S11.2)
       return true;
@@ -211,14 +236,17 @@ export async function GET(req: Request): Promise<Response> {
   }
   const andpcOnly = params.get('andpcOnly') === '1';
   const avecCompteProduit = params.get('avecCompteProduit') === '1';
-  const achevalOnly = params.get('achevalOnly') === '1'; // S16
-  const filters: Filters = { finFrom, debutFrom, andpcOnly, avecCompteProduit, achevalOnly };
+  const debutYear = params.get('debutYear'); // S16.1
+  if (debutYear !== null && !YEAR_RE.test(debutYear)) {
+    return json({ error: 'invalid debutYear (attendu AAAA)' }, 400); // ne lit pas Firestore
+  }
+  const filters: Filters = { finFrom, debutFrom, andpcOnly, avecCompteProduit, debutYear };
 
   try {
     const today = todayInParis(); // recalculé chaque requête → jamais codé en dur
     // Clé de cache = TOUS les filtres + le jour : un appel filtré ne sert jamais un cache
     // d'un autre filtre, et le changement de jour (borne haute) invalide naturellement.
-    const key = `${finFrom ?? 'all'}|${debutFrom ?? 'all'}|${andpcOnly ? '1' : '0'}|${avecCompteProduit ? '1' : '0'}|${achevalOnly ? '1' : '0'}|${today}`;
+    const key = `${finFrom ?? 'all'}|${debutFrom ?? 'all'}|${andpcOnly ? '1' : '0'}|${avecCompteProduit ? '1' : '0'}|${debutYear ?? 'all'}|${today}`;
     const now = Date.now();
     const hit = cache.get(key);
     if (!isFresh(hit, now)) {

@@ -541,98 +541,124 @@ describe('GET /api/export/sheet — filtres andpcOnly & avecCompteProduit', () =
   });
 });
 
-// --- S16 : filtre achevalOnly -----------------------------------------------
-describe('GET /api/export/sheet — filtre ?achevalOnly', () => {
-  const TODAY = '2999-12-31'; // borne haute neutre
+// --- S16.1 : filtre debutYear (chevauchement année X → X+1 UNIQUEMENT) -------
+describe('GET /api/export/sheet — filtre ?debutYear', () => {
+  const TODAY = '2999-12-31'; // borne haute neutre : seul debutYear discrimine
   const ids = (body: { rows: string[][] }) => body.rows.map((r) => r[0]);
-  // Une session à cheval : commence en 2025, finit en 2026 (c'est tout le point du filtre).
-  const CHEVAL = { ...rawWith('cheval', '2026-02-20T23:59:59'), dateDebut: '2025-11-10T00:00:00', aCheval: true };
-  const NORMALE = { ...rawWith('normale', '2026-05-10T00:00:00'), dateDebut: '2026-01-09T00:00:00', aCheval: false };
+  /** Session à cheval AAAA→AAAA+1 (ou pas), avec `aCheval` cohérent avec ses dates. */
+  const rawAnnees = (idAdf: string, dateDebut: string, dateFin: string) => ({
+    ...RAW_SESSION, idAdf, dateDebut, dateFin, aCheval: dateDebut.slice(0, 4) !== dateFin.slice(0, 4),
+  });
+  // Le cas voulu par Justine + les deux cas que S16 laissait passer à tort.
+  const S2025_2026 = rawAnnees('2025-2026', '2025-11-10T00:00:00', '2026-02-20T23:59:59'); // ✅ attendu
+  const S2024_2025 = rawAnnees('2024-2025', '2024-12-02T00:00:00', '2025-03-15T23:59:59'); // ❌ mauvaise année de début
+  const S2025_2025 = rawAnnees('2025-2025', '2025-03-01T00:00:00', '2025-06-30T23:59:59'); // ❌ pas à cheval
 
   beforeEach(() => {
     getMock.mockReset();
-    getMock.mockResolvedValue(asDocs([CHEVAL, NORMALE]));
+    getMock.mockResolvedValue(asDocs([S2025_2026, S2024_2025, S2025_2025]));
     process.env.SHEET_EXPORT_TOKEN = TOKEN;
     setToday(TODAY);
   });
 
-  it('sans achevalOnly → comportement INCHANGÉ (toutes les sessions)', async () => {
+  it('debutYear=2025 → GARDE 2025→2026, EXCLUT 2024→2025 et 2025→2025', async () => {
+    const GET = await freshRoute();
+    const body = await (await GET(req(`Bearer ${TOKEN}`, '?debutYear=2025'))).json();
+    expect(ids(body)).toEqual(['2025-2026']); // exactement le besoin métier
+  });
+
+  it('S16.1b : `achevalOnly` N\'EXISTE PLUS → paramètre inconnu, simplement IGNORÉ', async () => {
+    const GET = await freshRoute();
+    // L'ancien filtre portait le bug (il gardait 2024→2025). Il est retiré : le passer
+    // ne filtre plus rien du tout — seul `debutYear` active le mode cheval.
+    const body = await (await GET(req(`Bearer ${TOKEN}`, '?achevalOnly=1'))).json();
+    expect(ids(body)).toEqual(['2024-2025', '2025-2025', '2025-2026']); // aucune ligne retirée
+  });
+
+  it('debutYear est PARAMÉTRABLE : debutYear=2024 → seulement 2024→2025', async () => {
+    const GET = await freshRoute();
+    const body = await (await GET(req(`Bearer ${TOKEN}`, '?debutYear=2024'))).json();
+    expect(ids(body)).toEqual(['2024-2025']);
+  });
+
+  it('debutYear=2026 (aucune session correspondante) → 0 ligne, jamais d\'erreur', async () => {
+    const GET = await freshRoute();
+    const res = await GET(req(`Bearer ${TOKEN}`, '?debutYear=2026'));
+    expect(res.status).toBe(200);
+    expect(ids(await res.json())).toEqual([]);
+  });
+
+  it('sans debutYear → comportement INCHANGÉ (toutes les sessions)', async () => {
     const GET = await freshRoute();
     const body = await (await GET(req(`Bearer ${TOKEN}`))).json();
-    expect(ids(body)).toEqual(['cheval', 'normale']);
+    expect(ids(body)).toEqual(['2024-2025', '2025-2025', '2025-2026']); // tri par dateFin croissante
   });
 
-  it('achevalOnly=1 → uniquement aCheval===true', async () => {
-    const GET = await freshRoute();
-    const body = await (await GET(req(`Bearer ${TOKEN}`, '?achevalOnly=1'))).json();
-    expect(ids(body)).toEqual(['cheval']);
-  });
-
-  it('achevalOnly=1 NEUTRALISE debutFrom (la session à cheval débute en 2025)', async () => {
-    const GET = await freshRoute();
-    // debutFrom=2026-01-01 exclurait 'cheval' (débute le 2025-11-10)… sauf sous achevalOnly.
-    const body = await (await GET(req(`Bearer ${TOKEN}`, '?achevalOnly=1&debutFrom=2026-01-01'))).json();
-    expect(ids(body)).toEqual(['cheval']);
-  });
-
-  it('sans achevalOnly, debutFrom s\'applique toujours normalement (non-régression)', async () => {
-    const GET = await freshRoute();
-    const body = await (await GET(req(`Bearer ${TOKEN}`, '?debutFrom=2026-01-01'))).json();
-    expect(ids(body)).toEqual(['normale']); // 'cheval' (début 2025) exclue comme avant
-  });
-
-  it('debutFrom invalide → 400 même avec achevalOnly=1 (validation inchangée)', async () => {
-    const GET = await freshRoute();
-    const res = await GET(req(`Bearer ${TOKEN}`, '?achevalOnly=1&debutFrom=2026-1-1'));
-    expect(res.status).toBe(400);
-    expect(getMock).not.toHaveBeenCalled();
-  });
-
-  it('achevalOnly=1 + finFrom : la borne basse dateFin CONTINUE de s\'appliquer', async () => {
-    const AUTRE_CHEVAL = { ...rawWith('cheval2', '2026-08-15T00:00:00'), dateDebut: '2025-12-01T00:00:00', aCheval: true };
-    getMock.mockResolvedValue(asDocs([CHEVAL, AUTRE_CHEVAL, NORMALE]));
-    const GET = await freshRoute();
-    const body = await (await GET(req(`Bearer ${TOKEN}`, '?achevalOnly=1&finFrom=2026-06-01'))).json();
-    expect(ids(body)).toEqual(['cheval2']); // 'cheval' (fin février) exclue par finFrom
-  });
-
-  it('achevalOnly=1 + andpcOnly / avecCompteProduit : ces filtres CONTINUENT de s\'appliquer', async () => {
+  it('debutYear=2025 + andpcOnly=1 : le filtre ANDPC CONTINUE de s\'appliquer', async () => {
     getMock.mockResolvedValue(asDocs([
-      { ...CHEVAL, idAdf: 'ok', financeurAndpc: true, numeroCompteProduit: '92622525478' },
-      { ...CHEVAL, idAdf: 'sansAndpc', financeurAndpc: false, numeroCompteProduit: '92622525478' },
-      { ...CHEVAL, idAdf: 'sansCp', financeurAndpc: true, numeroCompteProduit: '' },
+      { ...S2025_2026, idAdf: 'chevalAndpc', financeurAndpc: true },
+      { ...S2025_2026, idAdf: 'chevalAutre', financeurAndpc: false },
+      { ...S2024_2025, idAdf: 'vieuxAndpc', financeurAndpc: true }, // bonne ANDPC, mauvaise année
     ]));
     const GET = await freshRoute();
-    const body = await (
-      await GET(req(`Bearer ${TOKEN}`, '?achevalOnly=1&andpcOnly=1&avecCompteProduit=1'))
-    ).json();
-    expect(ids(body)).toEqual(['ok']);
+    const body = await (await GET(req(`Bearer ${TOKEN}`, '?debutYear=2025&andpcOnly=1'))).json();
+    expect(ids(body)).toEqual(['chevalAndpc']); // les deux critères cumulés
   });
 
-  it('achevalOnly=1 : l\'exclusion "Échec" et la borne haute restent appliquées', async () => {
+  it('debutYear=2025 + avecCompteProduit=1 : ce filtre CONTINUE de s\'appliquer', async () => {
+    getMock.mockResolvedValue(asDocs([
+      { ...S2025_2026, idAdf: 'avecCp', numeroCompteProduit: '92622525478' },
+      { ...S2025_2026, idAdf: 'sansCp', numeroCompteProduit: '' },
+    ]));
+    const GET = await freshRoute();
+    const body = await (await GET(req(`Bearer ${TOKEN}`, '?debutYear=2025&avecCompteProduit=1'))).json();
+    expect(ids(body)).toEqual(['avecCp']);
+  });
+
+  it('debutYear=2025 : exclusion "Échec" et borne haute (aujourd\'hui) restent appliquées', async () => {
     setToday('2026-07-10');
     getMock.mockResolvedValue(asDocs([
-      { ...CHEVAL, idAdf: 'chevalEchec', etape: 'Échec' },
-      { ...rawWith('chevalFuture', '2026-09-01T00:00:00'), dateDebut: '2025-12-01T00:00:00', aCheval: true },
-      CHEVAL,
+      { ...S2025_2026, idAdf: 'chevalEchec', etape: 'Échec' }, // exclue : Échec
+      rawAnnees('chevalFuture', '2025-12-01T00:00:00', '2026-09-01T00:00:00'), // exclue : > aujourd'hui
+      S2025_2026,
     ]));
     const GET = await freshRoute();
-    const body = await (await GET(req(`Bearer ${TOKEN}`, '?achevalOnly=1'))).json();
-    expect(ids(body)).toEqual(['cheval']);
+    const body = await (await GET(req(`Bearer ${TOKEN}`, '?debutYear=2025'))).json();
+    expect(ids(body)).toEqual(['2025-2026']);
   });
 
-  it('achevalOnly fait partie de la CLÉ DE CACHE : clé distincte, puis re-servi', async () => {
+  it('debutYear=2025 + finFrom : la borne basse dateFin CONTINUE de s\'appliquer', async () => {
+    const TARD = rawAnnees('chevalTard', '2025-12-01T00:00:00', '2026-08-15T00:00:00');
+    getMock.mockResolvedValue(asDocs([S2025_2026, TARD]));
+    const GET = await freshRoute();
+    const body = await (await GET(req(`Bearer ${TOKEN}`, '?debutYear=2025&finFrom=2026-06-01'))).json();
+    expect(ids(body)).toEqual(['chevalTard']); // 2025-2026 finit en février → exclue par finFrom
+  });
+
+  it('debutYear NEUTRALISE debutFrom (la session à cheval débute l\'année d\'avant)', async () => {
+    const GET = await freshRoute();
+    // debutFrom=2026-01-01 exclurait 2025→2026 (débute le 2025-11-10)… sauf sous debutYear.
+    const body = await (await GET(req(`Bearer ${TOKEN}`, '?debutYear=2025&debutFrom=2026-01-01'))).json();
+    expect(ids(body)).toEqual(['2025-2026']);
+  });
+
+  it('format debutYear invalide → 400, ne lit PAS Firestore', async () => {
+    const GET = await freshRoute();
+    for (const bad of ['25', '2025-01', 'deux-mille-vingt-cinq', '', '20255']) {
+      const res = await GET(req(`Bearer ${TOKEN}`, `?debutYear=${encodeURIComponent(bad)}`));
+      expect(res.status).toBe(400);
+    }
+    expect(getMock).not.toHaveBeenCalled();
+    expect(pendingGetMock).not.toHaveBeenCalled();
+  });
+
+  it('debutYear fait partie de la CLÉ DE CACHE : années distinctes → lectures distinctes', async () => {
     const GET = await freshRoute();
     await GET(req(`Bearer ${TOKEN}`)); // clé de base
-    await GET(req(`Bearer ${TOKEN}`, '?achevalOnly=1')); // clé ≠ → nouvelle lecture
-    expect(getMock).toHaveBeenCalledTimes(2);
-    await GET(req(`Bearer ${TOKEN}`, '?achevalOnly=1')); // re-servi par le cache
-    expect(getMock).toHaveBeenCalledTimes(2);
-  });
-
-  it('achevalOnly=0 ou valeur autre que "1" → filtre INACTIF (comme les autres flags)', async () => {
-    const GET = await freshRoute();
-    const body = await (await GET(req(`Bearer ${TOKEN}`, '?achevalOnly=0'))).json();
-    expect(ids(body)).toEqual(['cheval', 'normale']);
+    await GET(req(`Bearer ${TOKEN}`, '?debutYear=2025')); // clé ≠
+    await GET(req(`Bearer ${TOKEN}`, '?debutYear=2024')); // clé ≠ (une année ne sert PAS l'autre)
+    expect(getMock).toHaveBeenCalledTimes(3);
+    await GET(req(`Bearer ${TOKEN}`, '?debutYear=2025')); // re-servi par le cache
+    expect(getMock).toHaveBeenCalledTimes(3);
   });
 });
