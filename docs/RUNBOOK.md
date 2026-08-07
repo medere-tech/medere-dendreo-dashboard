@@ -118,6 +118,27 @@ qui rattrape ce que le webhook ne voit pas (les envois, les sessions sans activi
   et le repérage des financements hors DPC. Ces informations ne se rafraîchissent donc **qu'une fois
   par nuit** (le webhook, lui, ne réagit qu'aux signatures) — un délai sans conséquence, la
   facturation évoluant sur des semaines.
+- **Le ménage des « fantômes » (depuis S17.4) :** le cron nocturne — **et lui seul** — nettoie au
+  passage les lignes **fantômes**. Un fantôme, c'est une attestation *à relancer* qui a disparu de
+  Dendreo (annulée, participant désinscrit, document re-généré) mais que le miroir gardait
+  indéfiniment : Justine voyait des relances qui n'existaient plus. Désormais elles s'effacent
+  toutes seules, chaque nuit.
+  - **Ce qui est effacé :** uniquement une ligne **à relancer** (`pending`) dont Dendreo ne parle
+    plus. Rien d'autre.
+  - **Ce qui n'est JAMAIS effacé :** une attestation **signée**. C'est une preuve de conformité.
+    Si elle disparaît de Dendreo, le cron la **signale** dans son rapport
+    (`🚨 signées absentes de Dendreo`) et **laisse le document intact** — à examiner à la main.
+  - **En cas de doute, il ne touche à rien :** si la réponse de Dendreo paraît incomplète (vide,
+    ou beaucoup plus courte que le miroir), la purge est **sautée** pour cette session, la ligne
+    `[PURGE SKIP]` l'indique dans le journal, et la synchro se poursuit normalement. Aucun risque
+    d'effacement en masse sur un hoquet de l'API.
+  - **Où le lire :** dans le run GitHub Actions, section `PURGE DES FANTÔMES` du rapport final
+    (supprimés / skips / signées absentes), et une ligne `[PURGE SUPPRIMÉ]` par suppression.
+  - **Le webhook et le cron mensuel ne purgent pas** — c'est volontaire : le webhook réagit à un
+    événement isolé, il n'a pas de vue d'ensemble pour conclure qu'un document a disparu.
+  - **Besoin de purger une session précise, tout de suite ?** voir la section 8 (opérations
+    manuelles) : `scripts/purge-fantomes.mjs`, qui simule par défaut et n'efface qu'avec
+    `--execute`.
 
 ### 3.3 Le cron mensuel — réconciliation complète
 
@@ -135,7 +156,7 @@ jusqu'à l'année en cours** — une vérification plus large, ceinture et brete
 | Mécanisme | Quand | Ce qu'il couvre |
 |---|---|---|
 | **Webhook** | À chaque signature (temps réel) | Les signatures, instantanément |
-| **Cron nocturne** | Chaque nuit ~3 h | Année en cours + précédente (envois inclus) |
+| **Cron nocturne** | Chaque nuit ~3 h | Année en cours + précédente (envois inclus) **+ purge des fantômes** |
 | **Cron mensuel** | 1ᵉʳ du mois ~4 h | 2025 → année en cours (vérification complète) |
 
 **Conclusion : l'outil se tient à jour tout seul.** Un backfill manuel n'est nécessaire que dans
@@ -355,6 +376,19 @@ npx tsx scripts/verify-coverage.mjs      # vérifie que tout est cohérent
 > re-balaierait tout l'historique jusqu'en 2015 et ramènerait des données inutiles.
 > Le backfill est **reprenable** : s'il atteint le quota Firestore, il s'arrête proprement et on le
 > relance le lendemain.
+
+### Purger les fantômes d'une session précise (sans attendre la nuit)
+Depuis le dossier du projet — **le script simule par défaut**, il n'efface qu'avec `--execute` :
+```
+npx tsx scripts/purge-fantomes.mjs --idAdfs=3094              # simulation : liste ce qui partirait
+npx tsx scripts/purge-fantomes.mjs --idAdfs=3094 --execute    # efface pour de bon
+```
+> Même critère et mêmes garde-fous que le cron nocturne (§3.2) : seules les lignes **à relancer**
+> disparues de Dendreo sont effacées, **jamais** une signée. La suppression est **irréversible**
+> (pas de corbeille) — mais sans perte réelle : Dendreo reste la source de vérité, et une donnée
+> effacée à tort reviendrait à la prochaine réconciliation.
+> ⚠️ Les sorties de ce script contiennent des **noms de participants** : ne rien commiter, ne rien
+> coller dans un ticket public.
 
 ### Reconstruire entièrement le miroir (cas extrême)
 Si le miroir est corrompu, on peut le vider et le reconstruire depuis Dendreo (aucune perte : la

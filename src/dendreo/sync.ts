@@ -21,9 +21,9 @@ import {
   type SessionModuleView,
 } from './enrich';
 import { enrichFinancement, ensureAndpcValidated, loadCommerciauxReferentiel, type ParcoursFlags } from './financement';
-import { recalcSessionCounts, upsertSession, upsertSignature } from '../firebase/firestore';
+import { listSessionSignatureMirror, recalcSessionCounts, upsertSession, upsertSignature } from '../firebase/firestore';
 import type { SessionUpsertInput } from '../firebase/types';
-import type { AttestationLine } from './types';
+import type { AttestationLine, SessionSignatureStatus } from './types';
 
 const SESSION_FIELDS = [
   'id_action_de_formation', 'numero_complet', 'intitule', 'date_debut', 'date_fin',
@@ -148,23 +148,155 @@ function mapSignature(
   };
 }
 
+// =============================================================================
+// S17.4 — PURGE DES FANTÔMES (intégrée au sync)
+// =============================================================================
+// Un « fantôme » = une ligne du miroir `signatures` qui n'existe plus côté Dendreo.
+// Sans purge, elle reste comptée `pending` pour toujours → le cockpit affiche des
+// relances qui n'existent pas. Cf. docs/signature-rule.md §6.
+//
+// ┌── CRITÈRE DE SUPPRESSION (identique à scripts/purge-fantomes.mjs, prouvé S17.3) ──┐
+// │ Supprimer signatures/{idAdf}_{idParticipant}_{doctypeId} SI ET SEULEMENT SI :     │
+// │   (1) la clé est ABSENTE de la réponse fichiers.php du sync EN COURS, ET          │
+// │   (2) le status au miroir === 'pending'.                                          │
+// │ JAMAIS un 'signed' absent : une attestation signée est une PREUVE DE CONFORMITÉ.  │
+// │ Disparue de la source, c'est une ANOMALIE à signaler — jamais à effacer.          │
+// └───────────────────────────────────────────────────────────────────────────────────┘
+//
+// GARDE-FOUS (le cron tourne SANS SURVEILLANCE — une suppression est irréversible) :
+//  Le sync ne purge QUE sur une réponse Dendreo jugée FIABLE. Tout doute → SKIP total
+//  de la purge sur cette session (0 suppression), log de la raison, et le sync
+//  CONTINUE normalement (il écrit ce qu'il a récupéré). Cas de skip :
+//    a. réponse VIDE alors que le miroir a des docs        (hoquet API probable)
+//    b. réponse < 50 % des docs du miroir                  (réponse partielle probable)
+//    c. lignes non clefables (doctype_id vide) dans la réponse : des clés Dendreo
+//       manquent à l'appel → un vrai document ressemblerait à un fantôme
+//    d. miroir illisible / erreur Firestore
+//  Appel Dendreo KO (HTTP != 200) : `getSessionSignatureStatus` lève AVANT tout écrit,
+//  donc syncSession s'interrompt comme aujourd'hui — la purge n'est jamais atteinte.
+//
+// COÛT : ZÉRO appel Dendreo ajouté (on réutilise la réponse fichiers.php déjà
+// récupérée par le sync). Côté Firestore : +1 requête (miroir de la session) et
+// N suppressions, uniquement quand la purge est activée.
+//
+// LOGS — SANS PII (S17.4b). Ces lignes finissent dans les journaux GitHub Actions,
+// conservés 90 jours et lisibles par tout collaborateur du dépôt. On ne logge donc
+// NI le nom du participant, NI le nom du document : uniquement idAdf, la clé
+// {idAdf}_{idParticipant}_{doctypeId}, le doctype et le status. La clé suffit à
+// retrouver le participant dans Dendreo en cas d'audit.
+
+/** Réponse Dendreo < 50 % du miroir → réponse partielle probable → aucune suppression. */
+const PURGE_RATIO_SUSPECT = 0.5;
+
+/** Message d'erreur compact et sans PII (ce sont des erreurs HTTP/SDK). */
+function shortReason(err: unknown): string {
+  const msg = err instanceof Error ? err.message : String(err);
+  return msg.replace(/\s+/g, ' ').slice(0, 160);
+}
+
+export interface PurgeOutcome {
+  /** Fantômes pending réellement supprimés. */
+  purged: number;
+  /** Attestations SIGNÉES absentes de Dendreo : anomalies loggées, JAMAIS supprimées. */
+  signedMissing: number;
+  /** Raison du skip (réponse douteuse) ; `null` si la purge s'est exécutée. */
+  skipped: string | null;
+}
+
+const NO_PURGE: PurgeOutcome = { purged: 0, signedMissing: 0, skipped: null };
+
+/**
+ * Purge les fantômes `pending` d'UNE session, à partir du statut d'attestations
+ * DÉJÀ récupéré par le sync (aucun appel Dendreo supplémentaire).
+ *
+ * Ne lève JAMAIS : toute erreur est capturée et convertie en skip. La purge est un
+ * nettoyage opportuniste, elle ne doit pas pouvoir faire échouer un sync.
+ */
+export async function purgeGhostSignatures(idAdf: string, status: SessionSignatureStatus): Promise<PurgeOutcome> {
+  const id = String(idAdf);
+  const skip = (raison: string): PurgeOutcome => {
+    console.log(`[PURGE SKIP] idAdf=${id} — ${raison} (aucune suppression)`);
+    return { purged: 0, signedMissing: 0, skipped: raison };
+  };
+
+  let mirror;
+  try {
+    mirror = await listSessionSignatureMirror(id);
+  } catch (err) {
+    return skip(`miroir illisible : ${shortReason(err)}`); // (d)
+  }
+  if (mirror.length === 0) return NO_PURGE; // rien au miroir → rien à purger
+
+  const att = status.attestations;
+  if (att.length === 0) return skip('réponse Dendreo VIDE alors que le miroir a des docs'); // (a)
+  if (att.length < mirror.length * PURGE_RATIO_SUSPECT) {
+    return skip(`réponse partielle probable : ${att.length} attestation(s) Dendreo vs ${mirror.length} au miroir (< ${PURGE_RATIO_SUSPECT * 100} %)`); // (b)
+  }
+  if (status.ignored > 0) {
+    return skip(`${status.ignored} ligne(s) Dendreo sans doctype_id : jeu de clés incomplet`); // (c)
+  }
+
+  const clesDendreo = new Set(att.map((a) => `${a.idParticipant}_${a.doctypeId}`));
+  const absentes = mirror.filter((m) => !clesDendreo.has(`${m.idParticipant}_${m.doctypeId}`));
+
+  // Anomalies : signalées, JAMAIS touchées.
+  const signedMissing = absentes.filter((m) => m.status !== 'pending');
+  for (const s of signedMissing) {
+    console.log(`[PURGE ANOMALIE — NON SUPPRIMÉE] idAdf=${id} clé=${s.key} | doctype=${s.doctypeId || '—'} | status=${s.status || '—'}`);
+  }
+
+  let purged = 0;
+  for (const g of absentes.filter((m) => m.status === 'pending')) {
+    // Ceinture et bretelles : le critère est re-vérifié sur CE doc juste avant d'agir.
+    if (g.status !== 'pending' || clesDendreo.has(`${g.idParticipant}_${g.doctypeId}`)) continue;
+    const trace = `idAdf=${id} clé=${g.key} | doctype=${g.doctypeId || '—'} | status=pending`;
+    try {
+      await g.delete();
+      purged += 1;
+      console.log(`[PURGE SUPPRIMÉ] ${trace}`);
+    } catch (err) {
+      // Une suppression KO n'abat ni la purge des autres, ni le sync.
+      console.log(`[PURGE ÉCHEC] ${trace} → ${shortReason(err)}`);
+    }
+  }
+
+  return { purged, signedMissing: signedMissing.length, skipped: null };
+}
+
+export interface SyncOptions {
+  /**
+   * S17.4 — Purge des fantômes pending disparus de Dendreo.
+   * `false` PAR DÉFAUT : seul le chemin CRON (réconciliation nocturne) l'active.
+   * Le webhook, déclenché par un événement isolé, ne purge JAMAIS.
+   */
+  purge?: boolean;
+}
+
 export interface SyncResult {
   idAdf: string;
   found: boolean; // la session existe côté Dendreo
   attestations: number; // lignes upsertées
+  purged: number; // S17.4 : fantômes pending supprimés (0 si purge inactive ou skip)
+  signedMissing: number; // S17.4 : signées absentes de Dendreo (anomalies, jamais supprimées)
+  purgeSkipped: string | null; // S17.4 : raison du skip de la purge, sinon null
 }
 
 /**
  * Re-fetch d'UNE session (ADF + modules + fichiers signature) et upsert idempotent
- * (session + signatures + recalcSessionCounts). `client` injectable pour les tests.
+ * (session + signatures + purge optionnelle + recalcSessionCounts).
+ * `client` injectable pour les tests ; `options.purge` réservé au cron (cf. SyncOptions).
  */
-export async function syncSession(idAdf: string, client: DendreoClient = new DendreoClient(loadDendreoEnv())): Promise<SyncResult> {
+export async function syncSession(
+  idAdf: string,
+  client: DendreoClient = new DendreoClient(loadDendreoEnv()),
+  options: SyncOptions = {},
+): Promise<SyncResult> {
   const id = String(idAdf);
 
   const adf = asArray<Record<string, unknown>>(
     await client.get('actions_de_formation.php', { id, fields: SESSION_FIELDS }),
   )[0];
-  if (!adf) return { idAdf: id, found: false, attestations: 0 };
+  if (!adf) return { idAdf: id, found: false, attestations: 0, purged: 0, signedMissing: 0, purgeSkipped: null };
 
   const idEtape = String(adf.id_etape_process ?? '');
   const dateDebut = normDate(adf.date_debut);
@@ -214,7 +346,21 @@ export async function syncSession(idAdf: string, client: DendreoClient = new Den
       mapSignature(a, session, fin.financeurByParticipant.get(idp) ?? null, commercial, fin.parcoursByParticipant.get(idp)),
     );
   }
+
+  // S17.4 — Purge des fantômes. APRÈS les upserts (le miroir contient déjà ce que
+  // Dendreo vient de renvoyer), AVANT recalcSessionCounts (les compteurs du cockpit
+  // sont donc calculés sur un miroir DÉJÀ nettoyé, en une seule passe).
+  // Réutilise `status` : ZÉRO appel Dendreo ajouté.
+  const purge = options.purge === true ? await purgeGhostSignatures(id, status) : NO_PURGE;
+
   await recalcSessionCounts(id);
 
-  return { idAdf: id, found: true, attestations: status.attestations.length };
+  return {
+    idAdf: id,
+    found: true,
+    attestations: status.attestations.length,
+    purged: purge.purged,
+    signedMissing: purge.signedMissing,
+    purgeSkipped: purge.skipped,
+  };
 }

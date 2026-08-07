@@ -1,16 +1,20 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { DendreoClient } from '../src/dendreo/client';
 
 // Écritures Firestore mockées → tests hermétiques (aucun I/O, aucun émulateur requis).
-const { upsertSessionMock, upsertSignatureMock, recalcMock } = vi.hoisted(() => ({
+const { upsertSessionMock, upsertSignatureMock, recalcMock, listMirrorMock } = vi.hoisted(() => ({
   upsertSessionMock: vi.fn(async () => {}),
   upsertSignatureMock: vi.fn(async () => {}),
   recalcMock: vi.fn(async () => {}),
+  // S17.4 : la purge ne tourne pas ici (purge=false par défaut) — le mock existe
+  // pour que le module se charge, et sert d'assertion : il ne doit JAMAIS être appelé.
+  listMirrorMock: vi.fn(async () => []),
 }));
 vi.mock('../src/firebase/firestore', () => ({
   upsertSession: upsertSessionMock,
   upsertSignature: upsertSignatureMock,
   recalcSessionCounts: recalcMock,
+  listSessionSignatureMirror: listMirrorMock,
 }));
 
 const ADF = [{
@@ -56,6 +60,14 @@ beforeEach(() => {
   upsertSessionMock.mockClear();
   upsertSignatureMock.mockClear();
   recalcMock.mockClear();
+  listMirrorMock.mockClear();
+});
+
+// S17.4 : filet de sécurité global — aucun de ces syncs "ordinaires" (sans option
+// purge) ne doit toucher au miroir. Si un jour la purge devenait active par défaut,
+// ce test tomberait AVANT que la prod ne supprime quoi que ce soit.
+afterEach(() => {
+  expect(listMirrorMock).not.toHaveBeenCalled();
 });
 
 // --- S14.2 : etapes.php mis en cache module (1 lecture par exécution) --------

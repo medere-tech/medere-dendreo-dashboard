@@ -152,6 +152,44 @@ export async function listSignaturesByStatus(
   return snap.docs.map((d) => d.data() as SignatureDoc);
 }
 
+// --- Miroir des signatures d'une session (S17.4 : purge des fantômes) --------
+
+/**
+ * Une ligne du miroir `signatures` d'une session, accompagnée de SA méthode de
+ * suppression — liée au document RÉELLEMENT LU (`doc.ref`), jamais à une clé
+ * reconstruite : il est structurellement impossible de supprimer autre chose que
+ * le document qu'on vient d'inspecter. (Même garantie que scripts/purge-fantomes.mjs.)
+ */
+export interface SignatureMirrorEntry {
+  key: string; // id du doc = {idAdf}_{idParticipant}_{doctypeId}
+  idParticipant: string;
+  doctypeId: string;
+  status: string; // brut (pas de cast : un status inattendu ne doit PAS ressembler à 'pending')
+  nom: string;
+  documentName: string;
+  signatureDate: string | null;
+  /** Supprime EXACTEMENT ce document. IRRÉVERSIBLE. */
+  delete(): Promise<void>;
+}
+
+/** Lit le miroir `signatures` d'UNE session (index idAdf). Lecture seule. */
+export async function listSessionSignatureMirror(idAdf: string): Promise<SignatureMirrorEntry[]> {
+  assertString(idAdf, 'idAdf');
+  const snap = await getDb().collection(SIGNATURES).where('idAdf', '==', idAdf).get();
+  return snap.docs.map((d) => ({
+    key: d.id,
+    idParticipant: String(d.get('idParticipant') ?? ''),
+    doctypeId: String(d.get('doctypeId') ?? ''),
+    status: String(d.get('status') ?? ''),
+    nom: String(d.get('nom') ?? ''),
+    documentName: String(d.get('documentName') ?? ''),
+    signatureDate: (d.get('signatureDate') as string | null) ?? null,
+    delete: async (): Promise<void> => {
+      await d.ref.delete();
+    },
+  }));
+}
+
 // --- Recalcul agrégat de la session (TRANSACTION, atomique) ------------------
 export async function recalcSessionCounts(idAdf: string): Promise<{ counts: Counts; oldestPendingSentDate: string | null }> {
   assertString(idAdf, 'idAdf');

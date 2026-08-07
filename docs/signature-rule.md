@@ -49,6 +49,37 @@ Pour chaque attestation trackée :
 
 Clé par `(idAdf, idParticipant, doctypeId)`. Si doublon exact d'un même document pour un participant → dédupliquer, **garder le signé** s'il existe, sinon le plus récent.
 
+## 5 bis. Purge des fantômes (S17.4) — quand une ligne du miroir est SUPPRIMÉE
+
+Un **fantôme** = une ligne de `signatures` qui n'existe **plus** côté Dendreo (attestation annulée, participant désinscrit, document re-généré sous une autre clé). Sans purge, elle reste comptée `pending` **pour toujours** : le cockpit affiche des relances qui n'existent pas.
+
+**Critère de suppression — verrouillé, ne pas élargir.**
+On supprime `signatures/{idAdf}_{idParticipant}_{doctypeId}` **si et seulement si** :
+1. la clé est **ABSENTE** de la réponse `fichiers.php` du sync **en cours**, **ET**
+2. le `status` au miroir est **`pending`**.
+
+Le critère ne regarde **ni** le participant, **ni** l'assiduité, **ni** l'inscription : uniquement **la clé et le statut**.
+
+**JAMAIS un `signed`.** Une attestation signée est une **preuve de conformité**. Disparue de la source, c'est une **anomalie à signaler** (`[PURGE ANOMALIE — NON SUPPRIMÉE]`), jamais à effacer. Idem pour tout `status` inattendu : seul le littéral `pending` est supprimable.
+
+**Garde-fous — on ne purge que sur une réponse Dendreo FIABLE.** Le cron tourne sans surveillance et une suppression Firestore est irréversible : au moindre doute, la purge est **entièrement sautée** pour cette session (0 suppression, docs gardés) et le sync **continue normalement** — il écrit ce qu'il a récupéré. Cas de skip :
+
+| Situation | Pourquoi c'est suspect |
+|---|---|
+| Réponse **vide** alors que le miroir a des docs | hoquet API — tout ressemblerait à un fantôme |
+| Réponse **< 50 %** des docs du miroir | réponse partielle probable |
+| Lignes **sans `doctype_id`** dans la réponse | jeu de clés incomplet (cf. §2) → un vrai document passerait pour un fantôme |
+| Miroir **illisible** (erreur Firestore) | on ne compare rien |
+| Appel `fichiers.php` **KO** (HTTP ≠ 200) | le sync s'interrompt avant : la purge n'est jamais atteinte |
+
+La purge **ne peut pas faire échouer un sync** : toute erreur (y compris une suppression refusée) est capturée et loggée, jamais propagée.
+
+**Où elle tourne.** Dans `syncSession` / `backfill`, **après** l'upsert des attestations renvoyées et **avant** `recalcSessionCounts` — les compteurs du cockpit sont donc calculés sur un miroir **déjà nettoyé**, en une seule passe. Elle réutilise la réponse `fichiers.php` déjà récupérée : **zéro appel Dendreo ajouté**.
+
+**Activation** : **cron nocturne uniquement** (`backfill --purge`). Pas le webhook (événement isolé, non supervisé), pas le cron mensuel. Cf. `docs/RUNBOOK.md` §3.2.
+
+Implémentation : `purgeGhostSignatures` (`src/dendreo/sync.ts`), partagée sync + backfill. Équivalent manuel et ciblé : `scripts/purge-fantomes.mjs` (dry-run par défaut).
+
 ## 6. Cible de réconciliation (preuve)
 
 La session de l'image Dendreo « Attestation sur l'honneur PI_2026 » : **6 envoyés · 5 signés · 1 à relancer**. Notre calcul doit retomber **exactement** là-dessus.

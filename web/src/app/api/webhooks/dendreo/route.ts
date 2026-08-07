@@ -51,7 +51,11 @@ export async function POST(req: Request): Promise<Response> {
 
   // 3) Re-fetch + upsert idempotent (fonctions existantes via @shared).
   try {
-    const res = await syncSession(decision.idAdf); // res inclut idAdf
+    // S17.4 : `purge: false` EXPLICITE. Le webhook réagit à UN événement isolé —
+    // il n'a aucune raison de conclure qu'un document absent a disparu, et il n'est
+    // pas supervisé au moment où il tourne. La purge des fantômes est réservée à la
+    // réconciliation nocturne (cf. docs/RUNBOOK.md §3.2). NE PAS passer à true ici.
+    const res = await syncSession(decision.idAdf, undefined, { purge: false }); // res inclut idAdf
     devLog({ event: payload?.event, name, matched: true, ...res });
     return json({ ok: true, ...res }, 200);
   } catch (err) {

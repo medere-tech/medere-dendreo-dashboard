@@ -13,12 +13,18 @@
 // - Reprenable via _meta/backfill.yearsProcessed (sauf --force).
 // - Résilient (une session en échec n'arrête pas le run), pacing concurrence 5,
 //   arrêt propre sur quota Firestore (RESOURCE_EXHAUSTED), logs SANS PII.
+// - S17.4 : --purge active la PURGE DES FANTÔMES (mêmes critère et garde-fous que
+//   scripts/purge-fantomes.mjs, via la fonction partagée purgeGhostSignatures).
+//   OPT-IN : sans le flag, comportement strictement inchangé. Seul le cron NOCTURNE
+//   le passe (cf. .github/workflows/backfill-nightly.yml). Zéro appel Dendreo ajouté.
+//   Ses logs sont SANS PII comme le reste du backfill (clé + doctype + status).
 
 import { loadDendreoEnv, DENDREO } from '../src/config';
 import { DendreoClient } from '../src/dendreo/client';
 import { getSessionSignatureStatus } from '../src/dendreo/signatures';
 import { deriveEligibleDpc, deriveNumeroCompteProduit, eppConnecte, extractDatesSynchrones, formatLabel, hasEpp, isACheval, parseHeures } from '../src/dendreo/enrich';
 import { enrichFinancement, ensureAndpcValidated, loadCommerciauxReferentiel } from '../src/dendreo/financement';
+import { purgeGhostSignatures } from '../src/dendreo/sync';
 import { getDb } from '../src/firebase/admin';
 import { recalcSessionCounts, upsertSession, upsertSignature } from '../src/firebase/firestore';
 
@@ -27,10 +33,11 @@ const CONCURRENCY = 5;
 
 // --- args -------------------------------------------------------------------
 function parseArgs(argv) {
-  const a = { dryRun: false, force: false, year: null, limit: null };
+  const a = { dryRun: false, force: false, year: null, limit: null, purge: false };
   for (let i = 0; i < argv.length; i++) {
     const t = argv[i];
     if (t === '--dry-run') a.dryRun = true;
+    else if (t === '--purge') a.purge = true; // S17.4 : opt-in, jamais par défaut
     else if (t === '--force') a.force = true;
     else if (t === '--year') a.year = Number(argv[++i]);
     else if (t.startsWith('--year=')) a.year = Number(t.slice('--year='.length));
@@ -294,6 +301,7 @@ async function processSession(session) {
     const fin = await enrichFinancement(session.idAdf, client, session.aCheval);
     Object.assign(session, fin.session);
 
+    let purge = { purged: 0, signedMissing: 0, skipped: null };
     if (!args.dryRun) {
       try {
         await upsertSession(session); // la SESSION s'écrit TOUJOURS (avant les lignes)
@@ -311,13 +319,17 @@ async function processSession(session) {
             log(`  ! ligne ignorée idAdf=${session.idAdf} : ${shortReason(lineErr)}`);
           }
         }
+        // S17.4 : purge des fantômes AVANT le recalcul → les compteurs du cockpit
+        // sont calculés sur un miroir déjà nettoyé. `st` est réutilisé tel quel :
+        // ZÉRO appel Dendreo ajouté. purgeGhostSignatures ne lève jamais.
+        if (args.purge) purge = await purgeGhostSignatures(session.idAdf, st);
         await recalcSessionCounts(session.idAdf); // toujours recalculé après écriture
       } catch (werr) {
         if (isQuotaError(werr)) { quotaHit = true; return { quota: true, idAdf: session.idAdf }; }
         throw werr;
       }
     }
-    return { ok: true, counts, ignored: ignoredLines, zeroParticipant: session.totalParticipants === 0 };
+    return { ok: true, counts, ignored: ignoredLines, purge, zeroParticipant: session.totalParticipants === 0 };
   } catch (err) {
     return { error: true, idAdf: session.idAdf, reason: shortReason(err) };
   }
@@ -343,7 +355,7 @@ async function processYear(year, budget) {
   const results = await pool(mapped, CONCURRENCY, processSession);
   budget.processed += mapped.length;
 
-  const agg = { sessions: 0, envoyes: 0, signes: 0, nonSignes: 0, ignored: 0, zeroParticipant: 0, errors: [] };
+  const agg = { sessions: 0, envoyes: 0, signes: 0, nonSignes: 0, ignored: 0, zeroParticipant: 0, errors: [], purged: 0, signedMissing: 0, purgeSkips: 0 };
   for (const r of results) {
     if (!r || r.skipped || r.quota) continue;
     if (r.error) { agg.errors.push({ idAdf: r.idAdf, reason: r.reason }); continue; }
@@ -352,25 +364,39 @@ async function processYear(year, budget) {
     agg.signes += r.counts.signes;
     agg.nonSignes += r.counts.nonSignes;
     agg.ignored += r.ignored ?? 0;
+    if (r.purge) { // S17.4
+      agg.purged += r.purge.purged;
+      agg.signedMissing += r.purge.signedMissing;
+      if (r.purge.skipped) agg.purgeSkips += 1;
+    }
     if (r.zeroParticipant) agg.zeroParticipant += 1;
   }
-  log(`année ${year} → sessions:${agg.sessions} envoyes:${agg.envoyes} signes:${agg.signes} nonSignes:${agg.nonSignes} ignoredLines:${agg.ignored} zeroPart:${agg.zeroParticipant} erreurs:${agg.errors.length}`);
+  log(`année ${year} → sessions:${agg.sessions} envoyes:${agg.envoyes} signes:${agg.signes} nonSignes:${agg.nonSignes} ignoredLines:${agg.ignored} zeroPart:${agg.zeroParticipant} erreurs:${agg.errors.length}` +
+      (args.purge ? ` | purge → supprimés:${agg.purged} skips:${agg.purgeSkips} signéesAbsentes:${agg.signedMissing}` : ''));
   return agg;
 }
 
 // --- rapport ----------------------------------------------------------------
 function printReport(perYear, meta, floorHasData) {
   log(`\n################ RAPPORT BACKFILL ${args.dryRun ? '(DRY-RUN)' : ''} ################`);
-  const tot = { sessions: 0, envoyes: 0, signes: 0, nonSignes: 0, ignored: 0, zeroParticipant: 0, errors: 0 };
+  const tot = { sessions: 0, envoyes: 0, signes: 0, nonSignes: 0, ignored: 0, zeroParticipant: 0, errors: 0, purged: 0, signedMissing: 0, purgeSkips: 0 };
   for (const [year, a] of Object.entries(perYear)) {
     log(`  ${year}: sessions=${a.sessions} envoyes=${a.envoyes} signes=${a.signes} nonSignes=${a.nonSignes} ignoredLines=${a.ignored} zeroPart=${a.zeroParticipant} err=${a.errors.length}`);
     tot.sessions += a.sessions; tot.envoyes += a.envoyes; tot.signes += a.signes;
     tot.nonSignes += a.nonSignes; tot.ignored += a.ignored; tot.zeroParticipant += a.zeroParticipant; tot.errors += a.errors.length;
+    tot.purged += a.purged ?? 0; tot.signedMissing += a.signedMissing ?? 0; tot.purgeSkips += a.purgeSkips ?? 0;
   }
   log(`  ---`);
   log(`  TOTAUX: sessions=${tot.sessions} envoyes=${tot.envoyes} signes=${tot.signes} nonSignes=${tot.nonSignes}`);
   log(`  à relancer (nonSignes) : ${tot.nonSignes}`);
   log(`  invariant signes+nonSignes==envoyes : ${tot.signes + tot.nonSignes === tot.envoyes ? 'OK ✅' : 'KO ❌'}`);
+
+  if (args.purge) {
+    log(`\n  PURGE DES FANTÔMES (S17.4) :`);
+    log(`   - fantômes pending SUPPRIMÉS : ${tot.purged}   (clé absente de Dendreo ET status pending)`);
+    log(`   - sessions où la purge a été SKIPPÉE (réponse douteuse) : ${tot.purgeSkips}   ← 0 suppression, docs gardés`);
+    log(`   - 🚨 signées absentes de Dendreo : ${tot.signedMissing}   ← JAMAIS touchées (anomalies à examiner)`);
+  }
 
   log(`\n  ANOMALIES :`);
   log(`   - lignes d'attestation ignorées (sans doctype_id exploitable) : ${tot.ignored}`);
@@ -387,7 +413,8 @@ function printReport(perYear, meta, floorHasData) {
 
 // --- main -------------------------------------------------------------------
 async function main() {
-  log(`# BACKFILL S2.2 — mode=${args.dryRun ? 'DRY-RUN' : 'WRITE'}${args.year ? ' year=' + args.year : ''}${args.limit != null ? ' limit=' + args.limit : ''}${args.force ? ' force' : ''}`);
+  log(`# BACKFILL S2.2 — mode=${args.dryRun ? 'DRY-RUN' : 'WRITE'}${args.year ? ' year=' + args.year : ''}${args.limit != null ? ' limit=' + args.limit : ''}${args.force ? ' force' : ''}${args.purge ? ' PURGE-FANTÔMES' : ''}`);
+  if (args.purge && args.dryRun) log('# ℹ --dry-run : la purge ne s\'exécute PAS (elle ne tourne que dans le chemin d\'écriture).');
   await ensureAndpcValidated(client); // S11.1 : valide le libellé "ANDPC" une fois (log d'alerte sinon)
   commerciauxRef = await loadCommerciauxReferentiel(client); // S13.1 : référentiel commerciaux (1 lecture, cache)
   etapesMap = await fetchEtapesMap();

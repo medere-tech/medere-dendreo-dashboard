@@ -45,7 +45,7 @@ jobs:
           YEARS="$(npx tsx scripts/reco-years.mjs nightly)"
           echo "Années à réconcilier (nightly) : $YEARS"
           for Y in $YEARS; do
-            echo "::group::backfill --year $Y --force"
+            echo "::group::backfill --year $Y --force --purge"
             # Choix quota (cf. S9.0a) : le backfill s'arrête PROPREMENT (exit 0) et
             # se reprend si le quota Firestore est atteint. On NE met PAS
             # continue-on-error (qui masquerait un vrai bug) : on inspecte la sortie.
@@ -53,7 +53,10 @@ jobs:
             #   - exit != 0 AVEC RESOURCE_EXHAUSTED → cas limite (quota au 1er appel) :
             #     warning non bloquant, repris au prochain run
             #   - exit != 0 SANS quota → échec réel → on fait échouer le job
-            if npm run backfill -- --year "$Y" --force 2>&1 | tee "/tmp/bf-$Y.log"; then
+            # --purge (S17.4) : nettoyage continu des fantômes (lignes pending
+            # disparues de Dendreo). ACTIVÉ ICI SEULEMENT — pas dans le mensuel,
+            # pas dans le webhook. Critère et garde-fous : docs/signature-rule.md §6.
+            if npm run backfill -- --year "$Y" --force --purge 2>&1 | tee "/tmp/bf-$Y.log"; then
               echo "année $Y : OK"
             elif grep -qiE "RESOURCE_EXHAUSTED|Quota exceeded" "/tmp/bf-$Y.log"; then
               echo "::warning::année $Y : quota Firestore atteint → arrêt propre, repris au prochain run (non bloquant)"

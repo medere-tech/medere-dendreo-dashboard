@@ -3,7 +3,7 @@ import { computeSignature } from '@/lib/server/webhook-verify';
 
 // Mock de la synchro (Dendreo + Firestore Admin) → tests hermétiques, aucun I/O.
 vi.mock('@shared/dendreo/sync', () => ({
-  syncSession: vi.fn(async (idAdf: string) => ({ idAdf, found: true, attestations: 3 })),
+  syncSession: vi.fn(async (idAdf: string) => ({ idAdf, found: true, attestations: 3, purged: 0, signedMissing: 0, purgeSkipped: null })),
 }));
 
 import { syncSession } from '@shared/dendreo/sync';
@@ -36,8 +36,15 @@ describe('POST /api/webhooks/dendreo', () => {
     const res = await POST(req(ATTESTATION));
     expect(res.status).toBe(200);
     expect(syncSession).toHaveBeenCalledTimes(1);
-    expect(syncSession).toHaveBeenCalledWith('2691');
+    expect(syncSession).toHaveBeenCalledWith('2691', undefined, { purge: false });
     expect(await res.json()).toMatchObject({ ok: true, idAdf: '2691' });
+  });
+
+  // S17.4 — le webhook ne purge JAMAIS (nettoyage réservé au cron nocturne).
+  it('purge des fantômes : le webhook appelle TOUJOURS syncSession avec purge:false', async () => {
+    await POST(req(ATTESTATION));
+    const appel = (syncSession as unknown as { mock: { calls: unknown[][] } }).mock.calls[0] ?? [];
+    expect(appel[2]).toEqual({ purge: false });
   });
 
   it('Convention → 200 ignoré, AUCUN sync', async () => {
@@ -70,8 +77,8 @@ describe('POST /api/webhooks/dendreo', () => {
     const r2 = await POST(req(ATTESTATION));
     expect([r1.status, r2.status]).toEqual([200, 200]);
     expect(syncSession).toHaveBeenCalledTimes(2);
-    expect(syncSession).toHaveBeenNthCalledWith(1, '2691');
-    expect(syncSession).toHaveBeenNthCalledWith(2, '2691');
+    expect(syncSession).toHaveBeenNthCalledWith(1, '2691', undefined, { purge: false });
+    expect(syncSession).toHaveBeenNthCalledWith(2, '2691', undefined, { purge: false });
     // pas de doublon : upsert par sessions/{idAdf} + signatures/{idAdf}_{idParticipant}_{doctypeId}
   });
 });
