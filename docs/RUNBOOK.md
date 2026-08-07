@@ -387,8 +387,9 @@ npx tsx scripts/purge-fantomes.mjs --idAdfs=3094 --execute    # efface pour de b
 > disparues de Dendreo sont effacées, **jamais** une signée. La suppression est **irréversible**
 > (pas de corbeille) — mais sans perte réelle : Dendreo reste la source de vérité, et une donnée
 > effacée à tort reviendrait à la prochaine réconciliation.
-> ⚠️ Les sorties de ce script contiennent des **noms de participants** : ne rien commiter, ne rien
-> coller dans un ticket public.
+> Ses sorties sont **sans donnée nominative** (depuis S17.3c) : chaque ligne porte l'`idAdf`, la clé
+> `{idAdf}_{idParticipant}_{doctypeId}`, le doctype et le statut — de quoi auditer et retrouver la
+> personne dans Dendreo, sans qu'un copier-coller de la trace ne divulgue d'identité.
 
 ### Reconstruire entièrement le miroir (cas extrême)
 Si le miroir est corrompu, on peut le vider et le reconstruire depuis Dendreo (aucune perte : la
