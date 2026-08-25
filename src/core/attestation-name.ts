@@ -1,7 +1,22 @@
-// src/dendreo/attestation-bloc.ts — Bloc pédagogique d'une attestation, D'APRÈS SON NOM.
+// src/core/attestation-name.ts — Lecture du NOM d'un document d'attestation.
 //
-// BRIQUE 1 : fonction PURE, non branchée au sync. Aucune I/O, aucun état.
+// Module NEUTRE et PUR : il n'importe RIEN (ni Dendreo, ni Firebase, ni Node).
+// C'est délibéré — il est consommé par les DEUX couches :
+//   - `src/dendreo/` (règle signature : quel fichier est une attestation trackée) ;
+//   - `src/firebase/` (recalcSessionCounts : agrégats par bloc).
+// Le placer ici évite que la couche Firestore importe la couche Dendreo.
 //
+// (Nommé `core/` et non `shared/` : l'alias Next `@shared/*` pointe déjà sur `src/*`,
+//  un dossier `src/shared/` donnerait des imports `@shared/shared/...` côté web.)
+
+/** minuscules + sans accents + trim (pour le préfixe "attestation"). */
+export function normalizeDocName(name: string): string {
+  return name.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
+}
+
+// ---------------------------------------------------------------------------
+// Bloc pédagogique (brique 1) — D'APRÈS LE NOM DU DOCUMENT
+// ---------------------------------------------------------------------------
 // RÈGLE (observée sur données réelles, sessions 3117 et 3818 —
 // cf. scripts/recon-classification-attestation.mjs) :
 //   nom normalisé contient "amont" → 'amont'
@@ -16,12 +31,6 @@
 //
 // Nom vide, non-string ou undefined → 'coeur'. La fonction ne lève JAMAIS : elle est
 // appelée sur des données Dendreo brutes, où `name` peut manquer.
-//
-// La normalisation est celle de la règle signature en prod (`normalizeDocName`,
-// src/dendreo/signatures.ts) : minuscules + sans accents + trim. Elle est IMPORTÉE,
-// jamais redéfinie — deux normalisations concurrentes finiraient par diverger.
-
-import { normalizeDocName } from './signatures';
 
 /** Bloc pédagogique auquel une attestation se rattache. */
 export type AttestationBloc = 'amont' | 'coeur' | 'aval';

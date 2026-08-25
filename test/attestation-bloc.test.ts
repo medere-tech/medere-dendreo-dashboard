@@ -3,8 +3,8 @@
 // (cf. scripts/recon-classification-attestation.mjs), plus les cas limites de robustesse.
 
 import { describe, it, expect } from 'vitest';
-import { classifyAttestationBloc } from '../src/dendreo/attestation-bloc';
-import type { AttestationBloc } from '../src/dendreo/attestation-bloc';
+import { classifyAttestationBloc } from '../src/core/attestation-name';
+import type { AttestationBloc } from '../src/core/attestation-name';
 
 describe('classifyAttestationBloc — noms RÉELS observés (3117 / 3818)', () => {
   const cas: ReadonlyArray<readonly [string, AttestationBloc]> = [
