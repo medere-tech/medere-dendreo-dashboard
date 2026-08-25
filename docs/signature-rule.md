@@ -43,6 +43,32 @@ Pour chaque attestation trackée :
 
 **Invariant garanti :** `signes + nonSignes == envoyes`. (Vérifiable ligne à ligne contre Dendreo.)
 
+### 4 bis. Ventilation par BLOC (S18) — amont+cœur vs aval
+
+Pour l'onglet Sheet des sessions **à cheval 26/27**, chaque session porte en plus :
+
+- **amontCoeur** = `{ signes, total }` des attestations dont le bloc **n'est PAS** `aval` ;
+- **aval** = `{ signes, total }` des attestations dont le bloc **est** `aval`.
+
+**Le bloc se lit dans le NOM du document** (`src/core/attestation-name.ts`, prouvé sur les
+sessions 3117 et 3818) : nom normalisé contenant `amont` → `amont` ; sinon `aval` → `aval` ;
+sinon → `coeur`. **`amont` est testé AVANT `aval`** : un nom portant les deux marqueurs part
+en `amont`, de façon déterministe.
+
+⚠️ **`coeur` est un DÉFAUT, pas une preuve.** Aucun nom réel ne contient le mot « cœur » : un
+nom sans marqueur signifie seulement « ni amont ni aval ». Ces attestations tombent donc dans
+**amontCoeur** — c'est le côté sûr pour l'onglet à cheval, mais c'est un choix, pas une neutralité.
+
+**Invariant garanti :** `amontCoeur.total + aval.total == envoyes` (et idem sur `signes`).
+Structurellement vrai : chaque ligne tombe dans exactement un des deux blocs.
+
+**Source du calcul** : `recalcSessionCounts` **re-dérive** le bloc depuis `documentName` à
+chaque recalc, dans la MÊME transaction et le MÊME snapshot que les 5 compteurs (0 lecture
+Firestore ajoutée, 0 appel Dendreo). Il ne lit **pas** le champ `bloc` persisté sur la ligne —
+c'est ce qui rend les documents écrits avant S18 corrects **sans migration**. Le champ `bloc`
+de `signatures/*` reste écrit par les mappers (`sync.ts`, `backfill.mjs`) pour l'affichage par
+ligne et les futurs filtres Firestore.
+
 **Affichage** : côté équipe, on montre le volume de **documents** (envoyés/signés/à relancer) ET le nombre de **participants** concernés/à relancer — les deux côte à côte, **jamais superposés/tassés**.
 
 ## 5. Dédup

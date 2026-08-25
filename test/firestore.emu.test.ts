@@ -48,6 +48,10 @@ const session = (idAdf: string): SessionUpsertInput => ({
   factureDateEnvoi: null,
   factureMontantHt: null,
   factureDatePaiement: null,
+  facture1DateEnvoi: null,
+  facture1DatePaiement: null,
+  facture2DateEnvoi: null,
+  facture2DatePaiement: null,
 });
 
 const sig = (idAdf: string, idParticipant: string, over: Partial<SignatureUpsertInput>): SignatureUpsertInput => ({
@@ -55,6 +59,7 @@ const sig = (idAdf: string, idParticipant: string, over: Partial<SignatureUpsert
   idParticipant,
   doctypeId: '177',
   documentName: 'Attestation test',
+  bloc: 'coeur', // S18 — surchargeable par `over` ; cohérent avec le documentName par défaut
   nom: 'Prenom Nom',
   status: 'pending',
   signatureDate: null,
@@ -120,7 +125,11 @@ onEmu('couche Firestore (émulateur)', () => {
     await upsertSignature(sig('T2', 'c', { status: 'pending', sentDate: '2026-03-20T00:00:00.000Z', doctypeId: '177' }));
     await upsertSignature(sig('T2', 'c', { status: 'pending', sentDate: '2026-03-05T00:00:00.000Z', doctypeId: '165' }));
 
-    const expected = { envoyes: 4, signes: 2, nonSignes: 2, participantsConcernes: 3, participantsARelancer: 1 };
+    const expected = {
+      envoyes: 4, signes: 2, nonSignes: 2, participantsConcernes: 3, participantsARelancer: 1,
+      // documentName par défaut = "Attestation test" → aucun marqueur → tout en amontCoeur.
+      amontCoeur: { signes: 2, total: 4 }, aval: { signes: 0, total: 0 },
+    };
     const res = await recalcSessionCounts('T2');
     expect(res.counts).toEqual(expected);
     expect(res.oldestPendingSentDate).toBe('2026-03-05T00:00:00.000Z'); // le plus ancien pending
@@ -128,6 +137,57 @@ onEmu('couche Firestore (émulateur)', () => {
     const s = await getSession('T2');
     expect(s?.counts).toEqual(expected);
     expect(s?.oldestPendingSentDate).toBe('2026-03-05T00:00:00.000Z');
+  });
+
+  // --- S18 : ventilation par bloc --------------------------------------------
+  it('recalcSessionCounts ventile amontCoeur / aval d\'après le documentName', async () => {
+    await upsertSession(session('T6'));
+    // amont : 1 signée + 1 pending | cœur (sans marqueur) : 1 signée | aval : 1 signée + 2 pending
+    await upsertSignature(sig('T6', 'a', { doctypeId: '1', documentName: 'Attestation_honneur_EPP amont_2025', bloc: 'amont', status: 'signed', signatureDate: '2026-02-10T00:00:00.000Z' }));
+    await upsertSignature(sig('T6', 'b', { doctypeId: '2', documentName: "Attestation sur l'honneur amont PI_2026", bloc: 'amont' }));
+    await upsertSignature(sig('T6', 'c', { doctypeId: '3', documentName: "Attestation sur l'honneur PI_2026", bloc: 'coeur', status: 'signed', signatureDate: '2026-02-11T00:00:00.000Z' }));
+    await upsertSignature(sig('T6', 'd', { doctypeId: '4', documentName: 'Attestation_honneur_EPP aval_2025', bloc: 'aval', status: 'signed', signatureDate: '2026-02-12T00:00:00.000Z' }));
+    await upsertSignature(sig('T6', 'e', { doctypeId: '5', documentName: 'ATTESTATION EPP AVAL', bloc: 'aval' }));
+    await upsertSignature(sig('T6', 'f', { doctypeId: '6', documentName: 'attestation eppaval', bloc: 'aval' }));
+
+    const { counts } = await recalcSessionCounts('T6');
+    expect(counts.amontCoeur).toEqual({ signes: 2, total: 3 }); // amont(1/2) + cœur(1/1)
+    expect(counts.aval).toEqual({ signes: 1, total: 3 });
+    // INVARIANT : aucune attestation perdue entre les deux blocs.
+    expect(counts.amontCoeur.total + counts.aval.total).toBe(counts.envoyes);
+    expect(counts.amontCoeur.signes + counts.aval.signes).toBe(counts.signes);
+  });
+
+  it('S18 — doc LEGACY sans champ `bloc` : compté quand même (dérivation du documentName)', async () => {
+    await upsertSession(session('T7'));
+    // Écriture DIRECTE (contourne upsertSignature/validation) : reproduit un doc écrit
+    // AVANT S18, donc sans champ `bloc`. C'est la preuve qu'aucune migration n'est requise.
+    const legacy = (idParticipant: string, doctypeId: string, documentName: string, status: string, signatureDate: string | null) =>
+      getDb().collection('signatures').doc(signatureKey('T7', idParticipant, doctypeId)).set({
+        idAdf: 'T7', idParticipant, doctypeId, documentName, nom: 'Prenom Nom',
+        status, signatureDate, sentDate: '2026-03-01T00:00:00.000Z', viewerUrl: null,
+        financeurAndpc: null, commercial: null, assidu: null, inscrit: null,
+        sessionNumeroComplet: 'ADF_T7', sessionIntitule: 'Session test',
+        sessionDateDebut: '2026-01-01T00:00:00.000Z', lastSyncedAt: '2026-03-01T00:00:00.000Z',
+        // PAS de champ `bloc` — volontairement.
+      });
+    await legacy('a', '1', 'Attestation_honneur_EPP aval_2025', 'signed', '2026-02-10T00:00:00.000Z');
+    await legacy('b', '2', 'Attestation_honneur_EPP amont_2025', 'pending', null);
+
+    const docA = await getDb().collection('signatures').doc(signatureKey('T7', 'a', '1')).get();
+    expect(docA.get('bloc')).toBeUndefined(); // le doc n'a bien AUCUN champ bloc
+
+    const { counts } = await recalcSessionCounts('T7');
+    expect(counts.aval).toEqual({ signes: 1, total: 1 });
+    expect(counts.amontCoeur).toEqual({ signes: 0, total: 1 });
+    expect(counts.amontCoeur.total + counts.aval.total).toBe(counts.envoyes);
+  });
+
+  it('S18 — upsertSignature REJETTE un bloc invalide (et un bloc absent)', async () => {
+    await expect(upsertSignature(sig('T8', 'p1', { bloc: 'AMONT' as unknown as 'amont' }))).rejects.toThrow(/bloc invalide/);
+    await expect(upsertSignature(sig('T8', 'p2', { bloc: undefined as unknown as 'coeur' }))).rejects.toThrow(/bloc invalide/);
+    const all = await getDb().collection('signatures').get();
+    expect(all.size).toBe(0); // rien n'a été écrit
   });
 
   it('validation stricte : rejette un input incohérent (signed sans signatureDate)', async () => {

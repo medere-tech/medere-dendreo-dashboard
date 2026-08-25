@@ -1,6 +1,14 @@
 // src/firebase/types.ts — Modèle Firestore typé (conforme à docs/firestore-model.md).
 
+import type { AttestationBloc } from '../core/attestation-name';
+
 export type SignatureStatus = 'signed' | 'pending';
+
+/** Signées / total d'un bloc pédagogique (S18 — onglet Sheet à cheval 26/27). */
+export interface BlocCounts {
+  signes: number;
+  total: number;
+}
 
 /** Compteurs par session (cf. docs/signature-rule.md §4). Invariant: signes+nonSignes==envoyes. */
 export interface Counts {
@@ -9,6 +17,14 @@ export interface Counts {
   nonSignes: number;
   participantsConcernes: number;
   participantsARelancer: number;
+  // --- S18 : ventilation par BLOC (amont+cœur vs aval) ------------------------
+  // Le bloc est DÉRIVÉ de `documentName` à chaque recalc (cf. recalcSessionCounts),
+  // jamais lu depuis le champ `bloc` persisté → aucune migration du miroir requise.
+  // Invariant : amontCoeur.total + aval.total === envoyes.
+  /** Attestations dont le bloc N'EST PAS 'aval' (amont + cœur, dont les noms sans marqueur). */
+  amontCoeur: BlocCounts;
+  /** Attestations dont le bloc est 'aval'. */
+  aval: BlocCounts;
 }
 
 /** Document `sessions/{idAdf}`. */
@@ -61,6 +77,13 @@ export interface SignatureDoc {
   idParticipant: string;
   doctypeId: string;
   documentName: string; // nom du document (commence par "Attestation")
+  /**
+   * S18 — bloc pédagogique déduit du `documentName` (classifyAttestationBloc).
+   * Sert à l'AFFICHAGE par ligne et aux futurs `where('bloc','==',…)`. Les agrégats
+   * `counts.amontCoeur` / `counts.aval` ne le lisent PAS : ils re-dérivent depuis
+   * `documentName`, pour que les docs écrits avant S18 soient comptés sans migration.
+   */
+  bloc: AttestationBloc; // 'amont' | 'coeur' | 'aval'
   nom: string;
   status: SignatureStatus; // "signed" | "pending" (plus de "notSent")
   signatureDate: string | null;

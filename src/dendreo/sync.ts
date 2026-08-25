@@ -7,6 +7,7 @@
 // signatures/{idAdf}_{idParticipant}_{doctypeId}, last-write-wins.
 
 import { loadDendreoEnv } from '../config';
+import { classifyAttestationBloc } from '../core/attestation-name';
 import { DendreoClient } from './client';
 import { getSessionSignatureStatus } from './signatures';
 import {
@@ -133,6 +134,7 @@ function mapSignature(
     idParticipant: String(a.idParticipant),
     doctypeId: String(a.doctypeId),
     documentName: a.documentName,
+    bloc: classifyAttestationBloc(a.documentName), // S18 : amont/cœur/aval par le NOM (0 appel Dendreo)
     nom: a.nom && a.nom.trim() ? a.nom : '—',
     status: a.status,
     signatureDate: a.signatureDate ?? null,

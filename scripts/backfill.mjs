@@ -25,6 +25,7 @@ import { getSessionSignatureStatus } from '../src/dendreo/signatures';
 import { deriveEligibleDpc, deriveNumeroCompteProduit, eppConnecte, extractDatesSynchrones, formatLabel, hasEpp, isACheval, parseHeures } from '../src/dendreo/enrich';
 import { enrichFinancement, ensureAndpcValidated, loadCommerciauxReferentiel } from '../src/dendreo/financement';
 import { purgeGhostSignatures } from '../src/dendreo/sync';
+import { classifyAttestationBloc } from '../src/core/attestation-name';
 import { getDb } from '../src/firebase/admin';
 import { recalcSessionCounts, upsertSession, upsertSignature } from '../src/firebase/firestore';
 
@@ -211,6 +212,7 @@ function mapSig(a, session, financeurAndpc, commercial, parcours) {
     idParticipant: String(a.idParticipant),
     doctypeId: String(a.doctypeId),
     documentName: a.documentName,
+    bloc: classifyAttestationBloc(a.documentName), // S18 : MÊME dérivation que sync.ts (ce fichier n'est PAS type-checké)
     nom: a.nom && a.nom.trim() ? a.nom : '—',
     status: a.status, // "signed" | "pending"
     signatureDate: a.signatureDate ?? null,

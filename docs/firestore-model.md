@@ -55,7 +55,14 @@ Une session de formation + son agrégat de signatures (pour la vue transverse et
     signes: number,
     nonSignes: number,                 // = envoyes - signes (à relancer)
     participantsConcernes: number,
-    participantsARelancer: number
+    participantsARelancer: number,
+    // S18 — ventilation par BLOC pédagogique (onglet Sheet à cheval 26/27).
+    // Le bloc est RE-DÉRIVÉ de `documentName` à CHAQUE recalc (classifyAttestationBloc),
+    // il n'est PAS lu du champ `bloc` persisté → les docs écrits avant S18 sont comptés
+    // correctement sans aucune migration du miroir.
+    // Invariant : amontCoeur.total + aval.total == envoyes.
+    amontCoeur: { signes: number, total: number },  // bloc != 'aval' (amont + cœur, dont noms sans marqueur)
+    aval:       { signes: number, total: number }   // bloc == 'aval'
   },
   oldestPendingSentDate: string | null,
   lastSyncedAt, source: "dendreo"
@@ -68,6 +75,10 @@ Une ligne par **attestation** (participant × session × doctype). Source de la 
 {
   idAdf, idParticipant, doctypeId,
   documentName: string,                // nom du document (commence par "Attestation")
+  bloc: "amont" | "coeur" | "aval",    // S18 — déduit du documentName (src/core/attestation-name.ts)
+                                       //   Sert à l'AFFICHAGE par ligne + futurs where('bloc','==',…).
+                                       //   Les agrégats counts.amontCoeur/aval ne le lisent PAS (ils re-dérivent
+                                       //   du documentName) → un doc pré-S18 sans ce champ reste compté juste.
   nom: string,                         // affichage, interne, accès protégé
   status: "signed" | "pending",        // plus de "notSent"
   signatureDate: string | null,

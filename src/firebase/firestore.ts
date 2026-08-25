@@ -3,9 +3,11 @@
 // entrées (aucun undefined silencieux). Recalcul des counts en TRANSACTION.
 
 import type { Query } from 'firebase-admin/firestore';
+import { classifyAttestationBloc, type AttestationBloc } from '../core/attestation-name';
 import { getDb } from './admin';
 import { sessionKey, signatureKey } from './keys';
 import type {
+  BlocCounts,
   Counts,
   SessionDoc,
   SessionUpsertInput,
@@ -17,6 +19,7 @@ import type {
 const SESSIONS = 'sessions';
 const SIGNATURES = 'signatures';
 const STATUSES: readonly SignatureStatus[] = ['signed', 'pending'];
+const BLOCS: readonly AttestationBloc[] = ['amont', 'coeur', 'aval'];
 
 const nowIso = (): string => new Date().toISOString();
 
@@ -50,6 +53,12 @@ function assertStringArray(v: unknown, name: string): asserts v is string[] {
 }
 function assertStatus(v: unknown): asserts v is SignatureStatus {
   if (typeof v !== 'string' || !STATUSES.includes(v as SignatureStatus)) throw new Error(`status invalide (attendu signed|pending) : ${String(v)}`);
+}
+/** S18 : `bloc` vient de classifyAttestationBloc, qui ne peut renvoyer que ces 3 valeurs.
+ *  Tout autre valeur = un mapper a oublié le champ → on échoue BRUYAMMENT plutôt que
+ *  d'écrire un `undefined` (que firebase-admin refuserait de toute façon plus loin). */
+function assertBloc(v: unknown): asserts v is AttestationBloc {
+  if (typeof v !== 'string' || !BLOCS.includes(v as AttestationBloc)) throw new Error(`bloc invalide (attendu amont|coeur|aval) : ${String(v)}`);
 }
 
 function validateSessionInput(s: SessionUpsertInput): void {
@@ -96,6 +105,7 @@ function validateSignatureInput(s: SignatureUpsertInput): void {
   assertString(s.idParticipant, 'idParticipant');
   assertString(s.doctypeId, 'doctypeId');
   assertString(s.documentName, 'documentName');
+  assertBloc(s.bloc); // S18 : amont|coeur|aval, dérivé du documentName par les mappers
   assertString(s.nom, 'nom');
   // Échos dénormalisés de la session : tolérés (miroir de champs "mous" de session).
   assertStringType(s.sessionNumeroComplet, 'sessionNumeroComplet');
@@ -204,11 +214,24 @@ export async function recalcSessionCounts(idAdf: string): Promise<{ counts: Coun
     const concernes = new Set<string>();
     const aRelancer = new Set<string>();
     let oldestPendingSentDate: string | null = null;
+    // S18 — ventilation par bloc, MÊME passe, MÊME snapshot : aucune lecture ajoutée.
+    // Le bloc est RE-DÉRIVÉ de `documentName` (déjà persisté sur chaque doc depuis S1)
+    // et non lu du champ `bloc` : les docs écrits avant S18 ne l'ont pas, et on veut
+    // qu'ils soient comptés correctement dès ce recalc, sans migration du miroir.
+    const amontCoeur: BlocCounts = { signes: 0, total: 0 };
+    const aval: BlocCounts = { signes: 0, total: 0 };
 
     snap.forEach((doc) => {
       const status = doc.get('status') as SignatureStatus;
       const idParticipant = String(doc.get('idParticipant') ?? '');
       if (idParticipant) concernes.add(idParticipant);
+
+      // Chaque doc tombe dans EXACTEMENT un bloc → amontCoeur.total + aval.total === envoyes.
+      const bloc = classifyAttestationBloc(String(doc.get('documentName') ?? ''));
+      const cible = bloc === 'aval' ? aval : amontCoeur;
+      cible.total += 1;
+      if (status === 'signed') cible.signes += 1;
+
       if (status === 'signed') {
         signes += 1;
       } else if (status === 'pending') {
@@ -227,6 +250,8 @@ export async function recalcSessionCounts(idAdf: string): Promise<{ counts: Coun
       nonSignes: envoyes - signes,
       participantsConcernes: concernes.size,
       participantsARelancer: aRelancer.size,
+      amontCoeur,
+      aval,
     };
 
     tx.set(sessionRef, { counts, oldestPendingSentDate, lastSyncedAt: nowIso() }, { merge: true });

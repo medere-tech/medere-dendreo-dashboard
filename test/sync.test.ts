@@ -28,8 +28,24 @@ const ETAPES = [
   { id_etape_process: '9', intitule: 'Échec' },
 ];
 
+/**
+ * S18 — fichiers de signature RÉELS (noms observés sur 3117/3818), pour vérifier le
+ * `bloc` écrit par le mapper. Un cas par branche de la règle : amont, aval, sans marqueur.
+ */
+const fichier = (id: string, name: string, idParticipant: string, signatureDate = '') => ({
+  id, collection_name: 'signature', name, doctype_id: `doc${id}`,
+  signature_date: signatureDate, created_at: '2026-03-01 10:00:00',
+  cible: 'action-de-formation', id_cible: '3117', public_url: `https://extranet/x/${id}`,
+  entite_liee: { Participant: { id_participant: idParticipant, prenom: 'A', nom: 'B' } },
+});
+const FICHIERS_BLOCS = [
+  fichier('1', 'Attestation_honneur_EPP amont_2025', 'p1', '2026-03-05 09:00:00'),
+  fichier('2', 'Attestation_honneur_EPP aval_2025', 'p2'),
+  fichier('3', "Attestation sur l'honneur PI_2026", 'p3'),
+];
+
 /** Compte les appels PAR endpoint. `failEtapes` = etapes.php renvoie 500 ; `adf` = ADF sur mesure. */
-function makeClient(opts: { failEtapes?: boolean; adf?: unknown[] } = {}) {
+function makeClient(opts: { failEtapes?: boolean; adf?: unknown[]; fichiers?: unknown[] } = {}) {
   const calls = new Map<string, number>();
   const json = (b: unknown) => new Response(JSON.stringify(b), { status: 200 });
   const fetchImpl = vi.fn(async (url: string) => {
@@ -38,7 +54,8 @@ function makeClient(opts: { failEtapes?: boolean; adf?: unknown[] } = {}) {
     if (resource === 'actions_de_formation.php') return json(opts.adf ?? ADF);
     if (resource === 'etapes.php') return opts.failEtapes ? new Response('err', { status: 500 }) : json(ETAPES);
     if (resource === 'financeurs.php') return json([{ id_financeur: '360', raison_sociale: 'ANDPC' }]); // évite l'alerte ANDPC
-    return json([]); // lams, financements, factures, laps, administrateurs, fichiers
+    if (resource === 'fichiers.php') return json(opts.fichiers ?? []); // S18 : [] par défaut = comportement d'avant
+    return json([]); // lams, financements, factures, laps, administrateurs
   });
   const client = new DendreoClient({ baseUrl: 'https://x/api', apiKey: 'SECRET', fetchImpl, sleep: async () => {} });
   return { client, calls, nb: (r: string) => calls.get(r) ?? 0 };
@@ -133,5 +150,51 @@ describe('syncSession — référentiel étapes en cache (S14.2)', () => {
     expect(etapeEcrite()).toBe('etape_6'); // 1er appel : etapes.php KO
     await syncSession('3117', client);
     expect(etapeEcrite()).toBe('Réalisation'); // 2e : relu avec succès, puis mis en cache
+  });
+});
+
+// --- S18 : bloc amont/cœur/aval écrit sur chaque ligne signature -------------
+describe('syncSession — champ `bloc` sur les signatures (S18)', () => {
+  /** Les lignes upsertées, indexées par idParticipant. */
+  const lignes = (): Map<string, { bloc: string; documentName: string }> => {
+    const out = new Map<string, { bloc: string; documentName: string }>();
+    for (const [ligne] of upsertSignatureMock.mock.calls as unknown as [{ idParticipant: string; bloc: string; documentName: string }][]) {
+      out.set(ligne.idParticipant, { bloc: ligne.bloc, documentName: ligne.documentName });
+    }
+    return out;
+  };
+
+  it('écrit le bloc déduit du documentName, une branche par cas réel', async () => {
+    const syncSession = await freshSync();
+    const { client } = makeClient({ fichiers: FICHIERS_BLOCS });
+
+    const res = await syncSession('3117', client);
+
+    expect(res.attestations).toBe(3);
+    const l = lignes();
+    expect(l.get('p1')?.bloc).toBe('amont'); // "…EPP amont_2025"
+    expect(l.get('p2')?.bloc).toBe('aval'); // "…EPP aval_2025"
+    expect(l.get('p3')?.bloc).toBe('coeur'); // aucun marqueur → défaut
+  });
+
+  it('le bloc est TOUJOURS renseigné (jamais undefined → écriture Firestore jamais rejetée)', async () => {
+    const syncSession = await freshSync();
+    const { client } = makeClient({ fichiers: FICHIERS_BLOCS });
+
+    await syncSession('3117', client);
+
+    expect(upsertSignatureMock).toHaveBeenCalledTimes(3);
+    for (const [ligne] of upsertSignatureMock.mock.calls as unknown as [{ bloc: unknown }][]) {
+      expect(['amont', 'coeur', 'aval']).toContain(ligne.bloc);
+    }
+  });
+
+  it('0 appel Dendreo ajouté : fichiers.php reste lu UNE fois par session', async () => {
+    const syncSession = await freshSync();
+    const { client, nb } = makeClient({ fichiers: FICHIERS_BLOCS });
+
+    await syncSession('3117', client);
+
+    expect(nb('fichiers.php')).toBe(1);
   });
 });
