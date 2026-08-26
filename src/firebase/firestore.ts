@@ -80,6 +80,7 @@ function validateSessionInput(s: SessionUpsertInput): void {
   assertStringType(s.type, 'type');
   assertStringType(s.format, 'format'); // libellé Format, toléré vide
   assertBoolean(s.aCheval, 'aCheval');
+  assertBoolean(s.facturableAnneeN, 'facturableAnneeN'); // S18 : dérivé des date_fin des modules non-aval
   assertBoolean(s.eppAmontConnecte, 'eppAmontConnecte');
   assertBoolean(s.eppAvalConnecte, 'eppAvalConnecte');
   assertBoolean(s.eligibleDpc, 'eligibleDpc');

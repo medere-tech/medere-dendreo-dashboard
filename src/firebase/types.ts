@@ -44,6 +44,13 @@ export interface SessionDoc {
   // --- Enrichissement S5.1b (cf. docs/recon-s5-findings.md) -------------------
   format: string; // libellé Format depuis mode_organisation (Présentiel/Mixte/E-learning/Classe virtuelle)
   aCheval: boolean; // année(dateDebut) != année(dateFin)
+  /**
+   * S18 — facturable au titre de l'ANNÉE N : TOUS les modules non-aval (catégorie != 21)
+   * ont leur `date_fin` strictement passée (jour Paris). Calculé pour TOUTES les sessions ;
+   * c'est l'onglet Sheet à cheval qui décide de l'afficher. `false` par défaut : aucun
+   * module lu, lecture LAM KO, que des modules aval, ou une date_fin illisible → false.
+   */
+  facturableAnneeN: boolean;
   eppAmontConnecte: boolean; // module id_categorie_module=22 avec heures connectées > 0
   eppAvalConnecte: boolean; // module id_categorie_module=21 avec heures connectées > 0
   eligibleDpc: boolean; // eligible_dpc="1" du module cœur (S6.2)

@@ -8,9 +8,11 @@
 
 import { loadDendreoEnv } from '../config';
 import { classifyAttestationBloc } from '../core/attestation-name';
+import { todayInParis } from '../core/paris-day';
 import { DendreoClient } from './client';
 import { getSessionSignatureStatus } from './signatures';
 import {
+  computeFacturableAnneeN,
   deriveEligibleDpc,
   deriveNumeroCompteProduit,
   eppConnecte,
@@ -308,6 +310,9 @@ export async function syncSession(
 
   // S15 : calculé AVANT l'enrichissement — le split facture 1/2 en dépend (0 lecture ajoutée).
   const aCheval = isACheval(dateDebut, dateFin);
+  // S18 : UN SEUL "aujourd'hui" pour tout le sync (un sync qui chevaucherait minuit
+  // Paris ne doit pas comparer deux modules à deux jours différents).
+  const today = todayInParis();
 
   // S11.1 : enrichissement financements/factures (résilient) — MÊME fonction que le backfill.
   await ensureAndpcValidated(client);
@@ -330,6 +335,7 @@ export async function syncSession(
     totalParticipants: Number(adf.total_participants ?? 0) || 0,
     format: formatLabel(adf.mode_organisation as string | undefined),
     aCheval,
+    facturableAnneeN: computeFacturableAnneeN(lams, today), // S18 : LAM déjà lus → 0 appel Dendreo
     eppAmontConnecte: eppConnecte(modules, 'amont'),
     eppAvalConnecte: eppConnecte(modules, 'aval'),
     eligibleDpc: deriveEligibleDpc(modules),

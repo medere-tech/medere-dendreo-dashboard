@@ -38,6 +38,7 @@ const session = (idAdf: string): SessionUpsertInput => ({
   totalParticipants: 4,
   format: 'Mixte',
   aCheval: false,
+  facturableAnneeN: false, // S18
   eppAmontConnecte: false,
   eppAvalConnecte: false,
   eligibleDpc: true,

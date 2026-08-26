@@ -44,8 +44,21 @@ const FICHIERS_BLOCS = [
   fichier('3', "Attestation sur l'honneur PI_2026", 'p3'),
 ];
 
+/**
+ * S18 — LAM à la forme RÉELLE : `id_categorie_module` sur le MODULE inclus,
+ * `date_fin` sur le LAM (deux niveaux différents, cf. recon 3818).
+ */
+const lam = (idLam: string, categorie: string, dateFin: string) => ({
+  id_lam: idLam, date_fin: dateFin,
+  module: { id_module: `m${idLam}`, id_categorie_module: categorie, c_nombre_dheures_connectees: '0' },
+});
+/** Modules non-aval TERMINÉS (2020) + aval futur (2999) → facturableAnneeN attendu = true. */
+const LAMS_ANNEE_N_FINIE = [lam('1', '22', '2020-07-08 23:59:59'), lam('2', '13', '2020-07-08 23:59:59'), lam('3', '21', '2999-01-15 23:59:59')];
+/** Un module cœur encore à venir → false. */
+const LAMS_ANNEE_N_EN_COURS = [lam('1', '22', '2020-07-08 23:59:59'), lam('2', '13', '2999-12-01 23:59:59')];
+
 /** Compte les appels PAR endpoint. `failEtapes` = etapes.php renvoie 500 ; `adf` = ADF sur mesure. */
-function makeClient(opts: { failEtapes?: boolean; adf?: unknown[]; fichiers?: unknown[] } = {}) {
+function makeClient(opts: { failEtapes?: boolean; adf?: unknown[]; fichiers?: unknown[]; lams?: unknown[] } = {}) {
   const calls = new Map<string, number>();
   const json = (b: unknown) => new Response(JSON.stringify(b), { status: 200 });
   const fetchImpl = vi.fn(async (url: string) => {
@@ -55,7 +68,8 @@ function makeClient(opts: { failEtapes?: boolean; adf?: unknown[]; fichiers?: un
     if (resource === 'etapes.php') return opts.failEtapes ? new Response('err', { status: 500 }) : json(ETAPES);
     if (resource === 'financeurs.php') return json([{ id_financeur: '360', raison_sociale: 'ANDPC' }]); // évite l'alerte ANDPC
     if (resource === 'fichiers.php') return json(opts.fichiers ?? []); // S18 : [] par défaut = comportement d'avant
-    return json([]); // lams, financements, factures, laps, administrateurs
+    if (resource === 'lams.php') return json(opts.lams ?? []); // S18 : idem
+    return json([]); // financements, factures, laps, administrateurs
   });
   const client = new DendreoClient({ baseUrl: 'https://x/api', apiKey: 'SECRET', fetchImpl, sleep: async () => {} });
   return { client, calls, nb: (r: string) => calls.get(r) ?? 0 };
@@ -196,5 +210,51 @@ describe('syncSession — champ `bloc` sur les signatures (S18)', () => {
     await syncSession('3117', client);
 
     expect(nb('fichiers.php')).toBe(1);
+  });
+});
+
+// --- S18 : facturableAnneeN écrit sur la session ----------------------------
+describe('syncSession — facturableAnneeN (S18)', () => {
+  /** Le flag de la DERNIÈRE session upsertée. */
+  const flagEcrit = (): unknown => {
+    const dernier = upsertSessionMock.mock.calls.at(-1) as unknown as [{ facturableAnneeN: unknown }] | undefined;
+    return dernier?.[0].facturableAnneeN;
+  };
+
+  it('modules non-aval TERMINÉS + aval futur → true (cas 3818)', async () => {
+    const syncSession = await freshSync();
+    const { client } = makeClient({ lams: LAMS_ANNEE_N_FINIE });
+
+    await syncSession('3117', client);
+
+    expect(flagEcrit()).toBe(true);
+  });
+
+  it('un module cœur encore à venir → false', async () => {
+    const syncSession = await freshSync();
+    const { client } = makeClient({ lams: LAMS_ANNEE_N_EN_COURS });
+
+    await syncSession('3117', client);
+
+    expect(flagEcrit()).toBe(false);
+  });
+
+  it('aucun LAM lu → false (défaut sûr), et le champ est TOUJOURS un booléen', async () => {
+    const syncSession = await freshSync();
+    const { client } = makeClient(); // lams.php → []
+
+    await syncSession('3117', client);
+
+    expect(flagEcrit()).toBe(false);
+    expect(typeof flagEcrit()).toBe('boolean'); // jamais undefined → validateSessionInput passe
+  });
+
+  it('0 appel Dendreo ajouté : lams.php reste lu UNE fois par session', async () => {
+    const syncSession = await freshSync();
+    const { client, nb } = makeClient({ lams: LAMS_ANNEE_N_FINIE });
+
+    await syncSession('3117', client);
+
+    expect(nb('lams.php')).toBe(1);
   });
 });

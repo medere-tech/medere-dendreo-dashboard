@@ -132,3 +132,78 @@ export function extractDatesSynchrones(lams: readonly unknown[], sessionMode: st
   }
   return [...days].sort();
 }
+
+// --- S18 : facturable au titre de l'ANNÉE N (sessions à cheval) ---------------
+// RÈGLE FIGÉE (prouvée sur la recon 3818) :
+//   facturableAnneeN = true SSI TOUS les modules dont `id_categorie_module != 21`
+//   ont leur `date_fin` PASSÉE (strictement < aujourd'hui, comparaison au JOUR Paris).
+//
+// ⚠ La catégorie du CŒUR n'est PAS stable (13, 3, 15…) : on ne liste JAMAIS les
+// catégories cœur. La seule borne fiable est l'aval = 21. Donc « année N » se définit
+// par la NÉGATIVE : tout ce qui n'est pas 21.
+//
+// ⚠ DEUX NIVEAUX DIFFÉRENTS, à ne pas confondre :
+//   - `id_categorie_module` vit sur le MODULE INCLUS (`lam.module`) — c'est déjà ce que
+//     lit `toModuleViews` en prod (sync.ts / backfill.mjs) ;
+//   - `date_fin` vit sur le LAM (3818 : lam 8087 amont → 2026-07-08, 8088 cœur →
+//     2026-07-08, 8089 aval → 2027-01-15).
+// Chacun garde un repli sur l'autre niveau : coût nul, robustesse en plus.
+//
+// Dates = jour « mur » NAÏF (cas A de firestore-model.md §6) → `slice(0,10)` puis
+// comparaison lexicographique de deux "AAAA-MM-JJ". JAMAIS de `new Date()` ici :
+// ce serait interpréter une date naïve en UTC et décaler d'un jour.
+//
+// JAMAIS `true` par défaut : chaque module non-aval doit PROUVER que sa date est passée.
+// Date illisible, absente, `today` invalide, aucun module, ou que des modules aval → false.
+
+/** Première valeur non vide parmi les candidats, trimée. '' si toutes absentes/vides. */
+function premiereNonVide(...candidats: readonly unknown[]): string {
+  for (const c of candidats) {
+    const s = String(c ?? '').trim();
+    if (s !== '') return s;
+  }
+  return '';
+}
+
+/** Objet `module` greffé sur un LAM (`include=module`), ou null. */
+function moduleOf(lam: Record<string, unknown>): Record<string, unknown> | null {
+  const m = lam.module;
+  return m && typeof m === 'object' ? (m as Record<string, unknown>) : null;
+}
+
+/** Catégorie d'un LAM : MODULE inclus d'abord (source de prod), repli niveau LAM. */
+function categorieOf(lam: Record<string, unknown>): string {
+  const m = moduleOf(lam);
+  return premiereNonVide(m ? m.id_categorie_module : undefined, lam.id_categorie_module);
+}
+
+/** Jour de fin d'un LAM : LAM d'abord (prouvé 3818), repli module. '' si illisible. */
+function dateFinJourOf(lam: Record<string, unknown>): string {
+  const m = moduleOf(lam);
+  const jour = premiereNonVide(lam.date_fin, m ? m.date_fin : undefined).slice(0, 10);
+  return ISO_DAY.test(jour) ? jour : '';
+}
+
+/**
+ * La session est-elle facturable au titre de l'année N (cf. bloc ci-dessus) ?
+ * PURE : `today` ("AAAA-MM-JJ", jour Paris) est INJECTÉ → déterministe.
+ * Borne STRICTE : un module qui finit AUJOURD'HUI n'est pas passé (facturable demain).
+ * @param lams LAM bruts de `lams.php?include=module,creneaux` (déjà lus — 0 appel ajouté).
+ */
+export function computeFacturableAnneeN(lams: readonly unknown[], today: string): boolean {
+  if (!ISO_DAY.test(String(today ?? '').trim())) return false; // jour de référence illisible → prudent
+  const anneeN: Record<string, unknown>[] = [];
+  for (const lam of lams) {
+    if (!lam || typeof lam !== 'object') continue;
+    const l = lam as Record<string, unknown>;
+    // Catégorie absente/illisible → NON classée aval → compte en année N (sens prudent :
+    // sa date devra être passée). Un LAM sans objet `module` compte donc lui aussi.
+    if (categorieOf(l) === EPP_AVAL_CAT) continue;
+    anneeN.push(l);
+  }
+  if (anneeN.length === 0) return false; // que de l'aval (ou aucun module) → rien à facturer en N
+  return anneeN.every((l) => {
+    const jour = dateFinJourOf(l);
+    return jour !== '' && jour < today; // '' (illisible) → false, jamais d'optimisme
+  });
+}

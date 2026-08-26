@@ -22,7 +22,8 @@
 import { loadDendreoEnv, DENDREO } from '../src/config';
 import { DendreoClient } from '../src/dendreo/client';
 import { getSessionSignatureStatus } from '../src/dendreo/signatures';
-import { deriveEligibleDpc, deriveNumeroCompteProduit, eppConnecte, extractDatesSynchrones, formatLabel, hasEpp, isACheval, parseHeures } from '../src/dendreo/enrich';
+import { computeFacturableAnneeN, deriveEligibleDpc, deriveNumeroCompteProduit, eppConnecte, extractDatesSynchrones, formatLabel, hasEpp, isACheval, parseHeures } from '../src/dendreo/enrich';
+import { todayInParis } from '../src/core/paris-day';
 import { enrichFinancement, ensureAndpcValidated, loadCommerciauxReferentiel } from '../src/dendreo/financement';
 import { purgeGhostSignatures } from '../src/dendreo/sync';
 import { classifyAttestationBloc } from '../src/core/attestation-name';
@@ -137,6 +138,7 @@ function mapSession(s) {
     // enrichWithModules pour datesSynchrones puis SUPPRIMÉ avant écriture (jamais dans le doc).
     modeOrganisation: String(s.mode_organisation ?? ''),
     aCheval: isACheval(dateDebut, dateFin),
+    facturableAnneeN: false, // S18 : provisoire → fixé par enrichWithModules (défaut sûr si lecture LAM KO)
     eppAmontConnecte: false,
     eppAvalConnecte: false,
     eligibleDpc: false, // provisoire → fixé par enrichWithModules
@@ -195,6 +197,7 @@ async function enrichWithModules(session) {
     session.aEpp = hasEpp(mods);
     session.eligibleDpc = deriveEligibleDpc(mods);
     session.datesSynchrones = extractDatesSynchrones(lams, session.modeOrganisation); // S12.1 : règle niveau session
+    session.facturableAnneeN = computeFacturableAnneeN(lams, todayInParis()); // S18 : MÊMES LAM, 0 lecture ajoutée
     // deriveNumeroCompteProduit garde l'ADF s'il est renseigné (session.numeroCompteProduit
     // non-null), sinon prend le num du module cœur.
     session.numeroCompteProduit = deriveNumeroCompteProduit(session.numeroCompteProduit, mods);

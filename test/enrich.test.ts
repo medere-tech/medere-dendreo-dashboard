@@ -3,6 +3,7 @@
 
 import { describe, it, expect } from 'vitest';
 import {
+  computeFacturableAnneeN,
   deriveEligibleDpc,
   deriveNumeroCompteProduit,
   eppConnecte,
@@ -178,5 +179,103 @@ describe('extractDatesSynchrones (S12.1 corrigé — règle niveau session)', ()
 
   it('tolère creneau singulier (objet unique)', () => {
     expect(extractDatesSynchrones([{ mode_organisation: 'presentiel', creneau: { day: '2026-04-01' } }], 'mixte')).toEqual(['2026-04-01']);
+  });
+});
+
+// --- S18 : computeFacturableAnneeN -------------------------------------------
+describe('computeFacturableAnneeN (S18)', () => {
+  const TODAY = '2026-08-25'; // jour de référence FIGÉ → tests déterministes
+
+  /** LAM tel que Dendreo le renvoie : catégorie sur le MODULE inclus, date_fin sur le LAM. */
+  const lam = (idLam: string, categorie: string, dateFin: string | null) => ({
+    id_lam: idLam,
+    date_fin: dateFin,
+    module: { id_module: `m${idLam}`, id_categorie_module: categorie, intitule: `module ${idLam}` },
+  });
+
+  // Cas RÉEL 3818 : amont + cœur finis le 2026-07-08, aval le 2027-01-15.
+  const LAMS_3818 = [
+    lam('8087', '22', '2026-07-08 23:59:59'), // EPP amont
+    lam('8088', '13', '2026-07-08 23:59:59'), // cœur (catégorie NON stable : 13 ici)
+    lam('8089', '21', '2027-01-15 23:59:59'), // EPP aval → hors année N
+  ];
+
+  it('3818 réel : amont + cœur passés, aval futur → true', () => {
+    expect(computeFacturableAnneeN(LAMS_3818, TODAY)).toBe(true);
+  });
+
+  it('un seul module non-aval encore à venir → false', () => {
+    const lams = [...LAMS_3818, lam('9000', '15', '2026-12-01 23:59:59')]; // cœur "15", futur
+    expect(computeFacturableAnneeN(lams, TODAY)).toBe(false);
+  });
+
+  it('tout dans le futur → false', () => {
+    const lams = [lam('1', '22', '2026-11-01'), lam('2', '13', '2026-12-15'), lam('3', '21', '2027-02-01')];
+    expect(computeFacturableAnneeN(lams, TODAY)).toBe(false);
+  });
+
+  it('QUE des modules aval (21) → false (rien à facturer côté année N)', () => {
+    expect(computeFacturableAnneeN([lam('1', '21', '2025-01-01'), lam('2', '21', '2025-02-01')], TODAY)).toBe(false);
+  });
+
+  it('aucun module → false', () => {
+    expect(computeFacturableAnneeN([], TODAY)).toBe(false);
+  });
+
+  it('BORNE STRICTE : un module qui finit AUJOURD\'HUI n\'est pas passé → false', () => {
+    expect(computeFacturableAnneeN([lam('1', '13', `${TODAY} 23:59:59`)], TODAY)).toBe(false);
+    // ...et la veille, oui.
+    expect(computeFacturableAnneeN([lam('1', '13', '2026-08-24 23:59:59')], TODAY)).toBe(true);
+  });
+
+  it('date_fin absente / vide / malformée sur un module non-aval → false (jamais true par défaut)', () => {
+    for (const mauvaise of [null, '', '   ', 'pas-une-date', '08/07/2026']) {
+      expect(computeFacturableAnneeN([lam('1', '13', mauvaise as string | null)], TODAY)).toBe(false);
+    }
+    // une seule date illisible suffit à faire tomber une session par ailleurs finie
+    expect(computeFacturableAnneeN([lam('1', '13', '2025-01-01'), lam('2', '22', null)], TODAY)).toBe(false);
+  });
+
+  it('catégorie portée par le LAM (et non le module) → même résultat', () => {
+    const lamsCatSurLam = [
+      { id_lam: '1', id_categorie_module: '13', date_fin: '2025-06-01' },
+      { id_lam: '2', id_categorie_module: '21', date_fin: '2027-01-15' }, // aval → ignoré
+    ];
+    expect(computeFacturableAnneeN(lamsCatSurLam, TODAY)).toBe(true);
+  });
+
+  it('date_fin portée par le module (et non le LAM) → même résultat', () => {
+    const lamsDateSurModule = [
+      { id_lam: '1', module: { id_categorie_module: '13', date_fin: '2025-06-01' } },
+      { id_lam: '2', module: { id_categorie_module: '21', date_fin: '2027-01-15' } },
+    ];
+    expect(computeFacturableAnneeN(lamsDateSurModule, TODAY)).toBe(true);
+  });
+
+  it('LAM SANS objet module : compté en année N (pas ignoré, contrairement à toModuleViews)', () => {
+    // Sa date est future → doit faire tomber le flag. S'il était ignoré, on aurait true.
+    expect(computeFacturableAnneeN([lam('1', '13', '2025-01-01'), { id_lam: '2', date_fin: '2027-05-01' }], TODAY)).toBe(false);
+    // Et s'il est passé, il ne bloque rien.
+    expect(computeFacturableAnneeN([lam('1', '13', '2025-01-01'), { id_lam: '2', date_fin: '2025-05-01' }], TODAY)).toBe(true);
+  });
+
+  it('catégorie absente/illisible → traitée comme année N (sens prudent)', () => {
+    expect(computeFacturableAnneeN([{ id_lam: '1', module: { id_categorie_module: '' }, date_fin: '2027-01-01' }], TODAY)).toBe(false);
+  });
+
+  it('la catégorie 21 est la SEULE borne : 3, 13, 15, 22… comptent tous en année N', () => {
+    const passes = ['3', '13', '15', '22', '99'].map((c, i) => lam(String(i), c, '2025-01-01'));
+    expect(computeFacturableAnneeN([...passes, lam('z', '21', '2027-01-01')], TODAY)).toBe(true);
+  });
+
+  it('robuste : LAM null / non-objet ignorés, jamais de crash', () => {
+    expect(computeFacturableAnneeN([null, undefined, 'x', 42, lam('1', '13', '2025-01-01')], TODAY)).toBe(true);
+    expect(computeFacturableAnneeN([null, undefined], TODAY)).toBe(false); // plus aucun module → false
+  });
+
+  it('`today` invalide → false (jamais de comparaison hasardeuse)', () => {
+    for (const mauvais of ['', 'aujourd\'hui', '2026-8-25', '2026-08-25T10:00:00']) {
+      expect(computeFacturableAnneeN([lam('1', '13', '2020-01-01')], mauvais)).toBe(false);
+    }
   });
 });

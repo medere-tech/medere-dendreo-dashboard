@@ -50,6 +50,17 @@ Une session de formation + son agrégat de signatures (pour la vue transverse et
   facture1DatePaiement: string | null, // S15 — date_paiement de cette même facture
   facture2DateEnvoi: string | null,    // S15 — date_envoi de la 2e facture ANDPC par date_emission
   facture2DatePaiement: string | null, // S15 — date_paiement de cette même facture
+  facturableAnneeN: boolean,           // S18 — TOUS les modules non-aval (id_categorie_module != 21)
+                                       //   ont leur date_fin STRICTEMENT passée (jour Paris, todayInParis()).
+                                       //   Deux niveaux DIFFÉRENTS dans lams.php : la catégorie vient du
+                                       //   MODULE inclus, la date_fin vient du LAM (repli croisé sur l'autre).
+                                       //   La catégorie du CŒUR n'est PAS stable (13, 3, 15…) : la seule borne
+                                       //   fiable est aval=21, donc « année N » = « tout sauf 21 ».
+                                       //   Borne STRICTE : un module finissant AUJOURD'HUI n'est pas passé
+                                       //   (la session devient facturable le lendemain).
+                                       //   false par défaut, module par module : aucun module, que de l'aval,
+                                       //   date_fin illisible, ou lecture LAM KO → false. JAMAIS true par défaut.
+                                       //   Calculé pour TOUTES les sessions (l'onglet Sheet à cheval filtre par debutYear).
   counts: {                            // cf. signature-rule.md §4
     envoyes: number,
     signes: number,
