@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import type { SessionDoc } from '@/lib/firestore/sessions';
+import { EMPTY_COUNTS, type SessionDoc } from '@/lib/firestore/sessions';
 import type { RelanceRow } from './relance';
 import { suiviSignaturesUrl } from '@/lib/dendreo';
 import { EMPTY_DISPLAY } from '@/lib/format';
@@ -7,7 +7,9 @@ import {
   RELANCE_CSV_HEADERS,
   SESSIONS_CSV_HEADERS,
   SESSIONS_SHEET_HEADERS,
+  SESSIONS_SHEET_HEADERS_CHEVAL2026,
   attestationManquante,
+  blocDisplay,
   ddmmyy,
   ddmmyyFromInstant,
   eppCoNc,
@@ -19,6 +21,7 @@ import {
   sessionsToCsv,
   sessionToCsvRow,
   sessionToSheetRow,
+  sessionToSheetRowCheval2026,
   signaturesSummary,
 } from './export';
 
@@ -28,6 +31,10 @@ const counts = (envoyes: number, signes: number) => ({
   nonSignes: envoyes - signes,
   participantsConcernes: envoyes,
   participantsARelancer: envoyes - signes,
+  // S18 : neutres ici — ces cas testent signaturesSummary/attestationManquante, qui ne
+  // lisent que envoyes/signes/nonSignes. Les blocs ont leur propre describe plus bas.
+  amontCoeur: { signes: 0, total: 0 },
+  aval: { signes: 0, total: 0 },
 });
 
 function session(over: Partial<SessionDoc> = {}): SessionDoc {
@@ -35,11 +42,14 @@ function session(over: Partial<SessionDoc> = {}): SessionDoc {
     idAdf: '1', numeroComplet: 'ADF_1', numeroSessionDpc: '26.001', numeroCompteProduit: '92622525478',
     intitule: 'Prévention', dateDebut: '2026-01-09T00:00:00', dateFin: '2026-02-20T23:59:59',
     idEtapeProcess: '6', etape: 'Réalisation', idCentre: '1', type: 'inter', totalParticipants: 4,
-    format: 'Mixte', aCheval: false, eppAmontConnecte: false, eppAvalConnecte: false, eligibleDpc: true, aEpp: true,
+    format: 'Mixte', aCheval: false, facturableAnneeN: false, eppAmontConnecte: false, eppAvalConnecte: false, eligibleDpc: true, aEpp: true,
     datesSynchrones: [],
     financeurAndpc: false, montantAndpc: null, factureDateEnvoi: null, factureMontantHt: null, factureDatePaiement: null,
     facture1DateEnvoi: null, facture1DatePaiement: null, facture2DateEnvoi: null, facture2DatePaiement: null,
-    counts: { envoyes: 3, signes: 1, nonSignes: 2, participantsConcernes: 3, participantsARelancer: 2 },
+    counts: {
+      envoyes: 3, signes: 1, nonSignes: 2, participantsConcernes: 3, participantsARelancer: 2,
+      amontCoeur: { signes: 0, total: 0 }, aval: { signes: 0, total: 0 },
+    },
     oldestPendingSentDate: null, lastSyncedAt: '', source: 'dendreo',
     ...over,
   };
@@ -73,9 +83,9 @@ describe('helpers de mapping', () => {
     expect(eppCoNc({ aEpp: true, eppAmontConnecte: false, eppAvalConnecte: false })).toBe('NC/NC');
   });
   it('signaturesSummary : 0 envoyé / tous signés / à relancer', () => {
-    expect(signaturesSummary({ envoyes: 0, signes: 0, nonSignes: 0, participantsConcernes: 0, participantsARelancer: 0 })).toBe(EMPTY_DISPLAY);
-    expect(signaturesSummary({ envoyes: 3, signes: 3, nonSignes: 0, participantsConcernes: 3, participantsARelancer: 0 })).toBe('Tous ont signé');
-    expect(signaturesSummary({ envoyes: 3, signes: 1, nonSignes: 2, participantsConcernes: 3, participantsARelancer: 2 })).toBe('2 à relancer');
+    expect(signaturesSummary({ ...EMPTY_COUNTS, envoyes: 0, signes: 0, nonSignes: 0, participantsConcernes: 0, participantsARelancer: 0 })).toBe(EMPTY_DISPLAY);
+    expect(signaturesSummary({ ...EMPTY_COUNTS, envoyes: 3, signes: 3, nonSignes: 0, participantsConcernes: 3, participantsARelancer: 0 })).toBe('Tous ont signé');
+    expect(signaturesSummary({ ...EMPTY_COUNTS, envoyes: 3, signes: 1, nonSignes: 2, participantsConcernes: 3, participantsARelancer: 2 })).toBe('2 à relancer');
   });
   it('attestationManquante : 0 envoyé → EMPTY_DISPLAY / tout signé → "Signature complète" / 2 sur 30 → "2/30"', () => {
     expect(attestationManquante(counts(0, 0))).toBe(EMPTY_DISPLAY);
@@ -309,6 +319,71 @@ describe('À RELANCER — colonnes & mapping', () => {
   });
   it('relanceToCsv : entête + lignes', () => {
     expect(relanceToCsv([relance()]).split('\r\n')).toHaveLength(2);
+  });
+});
+
+// --- S18 : onglet "Sessions à cheval 2026 - Auto" ----------------------------
+describe('ONGLET à cheval 2026 — 3 colonnes de bloc (S18)', () => {
+  const withBlocs = (amontCoeur: { signes: number; total: number }, aval: { signes: number; total: number }, facturable = false) =>
+    session({
+      facturableAnneeN: facturable,
+      counts: { envoyes: 13, signes: 5, nonSignes: 8, participantsConcernes: 13, participantsARelancer: 8, amontCoeur, aval },
+    });
+
+  it('en-têtes = les 28 EXISTANTES + 3 en FIN (aucun index existant ne bouge)', () => {
+    expect(SESSIONS_SHEET_HEADERS_CHEVAL2026).toHaveLength(SESSIONS_SHEET_HEADERS.length + 3);
+    // le préfixe est STRICTEMENT SESSIONS_SHEET_HEADERS, dans le même ordre
+    expect(SESSIONS_SHEET_HEADERS_CHEVAL2026.slice(0, SESSIONS_SHEET_HEADERS.length)).toEqual([...SESSIONS_SHEET_HEADERS]);
+    expect(SESSIONS_SHEET_HEADERS_CHEVAL2026.slice(-3)).toEqual(['Amont+cœur signés', 'Aval signés', 'Facturable année N']);
+  });
+
+  it('AUCUN en-tête dupliqué (protège l\'Apps Script)', () => {
+    expect(new Set(SESSIONS_SHEET_HEADERS_CHEVAL2026).size).toBe(SESSIONS_SHEET_HEADERS_CHEVAL2026.length);
+  });
+
+  it('blocDisplay : "signés/total" ; total 0 → "-" (jamais "0/0")', () => {
+    expect(blocDisplay({ signes: 3, total: 5 })).toBe('3/5');
+    expect(blocDisplay({ signes: 0, total: 8 })).toBe('0/8'); // 0 signé sur 8 : information RÉELLE
+    expect(blocDisplay({ signes: 0, total: 0 })).toBe(EMPTY_DISPLAY); // bloc absent → on ne sait pas
+    expect(blocDisplay(undefined)).toBe(EMPTY_DISPLAY); // doc pré-S18 non normalisé
+  });
+
+  it('sessionToSheetRowCheval2026 : préfixe == sessionToSheetRow (zéro logique dupliquée)', () => {
+    const s = withBlocs({ signes: 3, total: 5 }, { signes: 0, total: 8 });
+    const base = sessionToSheetRow(s, ['Jean Dupont'], 2);
+    const row = sessionToSheetRowCheval2026(s, ['Jean Dupont'], 2);
+    expect(row.slice(0, base.length)).toEqual(base);
+    expect(row).toHaveLength(SESSIONS_SHEET_HEADERS_CHEVAL2026.length);
+  });
+
+  it('les 3 cellules : amont 3/5, aval 0/8, facturable ❌ puis ✅', () => {
+    const col = (row: readonly string[], header: string): string | undefined =>
+      row[SESSIONS_SHEET_HEADERS_CHEVAL2026.indexOf(header as (typeof SESSIONS_SHEET_HEADERS_CHEVAL2026)[number])];
+
+    const nonFacturable = sessionToSheetRowCheval2026(withBlocs({ signes: 3, total: 5 }, { signes: 0, total: 8 }, false));
+    expect(col(nonFacturable, 'Amont+cœur signés')).toBe('3/5');
+    expect(col(nonFacturable, 'Aval signés')).toBe('0/8');
+    expect(col(nonFacturable, 'Facturable année N')).toBe('❌');
+
+    const facturable = sessionToSheetRowCheval2026(withBlocs({ signes: 5, total: 5 }, { signes: 0, total: 0 }, true));
+    expect(col(facturable, 'Amont+cœur signés')).toBe('5/5');
+    expect(col(facturable, 'Aval signés')).toBe(EMPTY_DISPLAY); // aucun module aval → "-"
+    expect(col(facturable, 'Facturable année N')).toBe('✅');
+  });
+
+  it('les DEUX "X/Y" de l\'onglet ont des sens INVERSES — vérifié sur la même ligne', () => {
+    // counts : 13 envoyées, 5 signées → 8 manquantes ; bloc amont+cœur : 3 signées sur 5.
+    const row = sessionToSheetRowCheval2026(withBlocs({ signes: 3, total: 5 }, { signes: 2, total: 8 }));
+    const at = (header: string) =>
+      row[SESSIONS_SHEET_HEADERS_CHEVAL2026.indexOf(header as (typeof SESSIONS_SHEET_HEADERS_CHEVAL2026)[number])];
+    expect(at('Attestation manquante')).toBe('8/13'); // manquantes / envoyées
+    expect(at('Amont+cœur signés')).toBe('3/5'); // signées / total
+  });
+
+  it('session SANS counts (doc partiel) → les 3 colonnes restent lisibles', () => {
+    const s = { ...session(), counts: undefined } as unknown as SessionDoc;
+    const row = sessionToSheetRowCheval2026(s);
+    expect(row.slice(-3)).toEqual([EMPTY_DISPLAY, EMPTY_DISPLAY, '❌']);
   });
 });
 

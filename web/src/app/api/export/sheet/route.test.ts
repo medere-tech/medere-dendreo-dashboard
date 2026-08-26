@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { SESSIONS_CSV_HEADERS, SESSIONS_SHEET_HEADERS } from '@/lib/sessions/export';
+import { SESSIONS_CSV_HEADERS, SESSIONS_SHEET_HEADERS, SESSIONS_SHEET_HEADERS_CHEVAL2026 } from '@/lib/sessions/export';
 import { sessionToCsvRow } from '@/lib/sessions/export';
 import { toSessionDoc } from '@/lib/firestore/sessions';
 import { EMPTY_DISPLAY } from '@/lib/format';
@@ -660,5 +660,100 @@ describe('GET /api/export/sheet — filtre ?debutYear', () => {
     expect(getMock).toHaveBeenCalledTimes(3);
     await GET(req(`Bearer ${TOKEN}`, '?debutYear=2025')); // re-servi par le cache
     expect(getMock).toHaveBeenCalledTimes(3);
+  });
+});
+
+// --- S18 : ?blocsCheval=1 (onglet "Sessions à cheval 2026 - Auto") ------------
+describe('GET /api/export/sheet?blocsCheval=1 (S18)', () => {
+  /** Session à cheval 2026→2027 AVEC les compteurs par bloc et le flag facturable. */
+  const RAW_CHEVAL_2026 = {
+    ...RAW_SESSION,
+    idAdf: '3818', dateDebut: '2026-09-10T00:00:00', dateFin: '2027-01-15T23:59:59',
+    aCheval: true, facturableAnneeN: true,
+    counts: {
+      envoyes: 13, signes: 5, nonSignes: 8, participantsConcernes: 13, participantsARelancer: 8,
+      amontCoeur: { signes: 3, total: 5 }, aval: { signes: 0, total: 8 },
+    },
+  };
+
+  beforeEach(() => {
+    getMock.mockReset();
+    getMock.mockResolvedValue(asDocs([RAW_CHEVAL_2026]));
+    process.env.SHEET_EXPORT_TOKEN = TOKEN;
+  });
+
+  it('AVEC le flag → headers = SESSIONS_SHEET_HEADERS_CHEVAL2026 (28 + 3)', async () => {
+    const GET = await freshRoute();
+    const body = await (await GET(req(`Bearer ${TOKEN}`, '?blocsCheval=1'))).json();
+
+    expect(body.headers).toEqual([...SESSIONS_SHEET_HEADERS_CHEVAL2026]);
+    expect(body.headers).toHaveLength(SESSIONS_SHEET_HEADERS.length + 3);
+    expect(body.rows[0]).toHaveLength(SESSIONS_SHEET_HEADERS_CHEVAL2026.length);
+  });
+
+  it('SANS le flag → headers = SESSIONS_SHEET_HEADERS, STRICTEMENT inchangés', async () => {
+    const GET = await freshRoute();
+    const body = await (await GET(req(`Bearer ${TOKEN}`))).json();
+
+    expect(body.headers).toEqual([...SESSIONS_SHEET_HEADERS]);
+    expect(body.rows[0]).toHaveLength(SESSIONS_SHEET_HEADERS.length);
+  });
+
+  it('l\'onglet 25/26 FIGÉ (debutYear=2025 SANS flag) garde 28 colonnes', async () => {
+    const GET = await freshRoute();
+    getMock.mockResolvedValue(asDocs([{ ...RAW_SESSION, dateDebut: '2025-09-10T00:00:00', dateFin: '2026-01-15T23:59:59' }]));
+    const body = await (await GET(req(`Bearer ${TOKEN}`, '?debutYear=2025'))).json();
+
+    expect(body.headers).toEqual([...SESSIONS_SHEET_HEADERS]);
+    expect(body.rows[0]).toHaveLength(SESSIONS_SHEET_HEADERS.length);
+  });
+
+  it('les 3 cellules ajoutées portent bien les valeurs du miroir', async () => {
+    const GET = await freshRoute();
+    const body = await (await GET(req(`Bearer ${TOKEN}`, '?blocsCheval=1'))).json();
+    const at = (header: string) =>
+      body.rows[0][SESSIONS_SHEET_HEADERS_CHEVAL2026.indexOf(header as (typeof SESSIONS_SHEET_HEADERS_CHEVAL2026)[number])];
+
+    expect(at('Amont+cœur signés')).toBe('3/5');
+    expect(at('Aval signés')).toBe('0/8');
+    expect(at('Facturable année N')).toBe('✅');
+    expect(at('Attestation manquante')).toBe('8/13'); // l'autre X/Y, sens INVERSE, intact
+  });
+
+  it('le flag est INDÉPENDANT de debutYear (combinables)', async () => {
+    const GET = await freshRoute();
+    const body = await (await GET(req(`Bearer ${TOKEN}`, '?debutYear=2026&blocsCheval=1'))).json();
+
+    expect(body.headers).toEqual([...SESSIONS_SHEET_HEADERS_CHEVAL2026]);
+    expect(body.rows).toHaveLength(1); // 2026 → 2027 : la session passe le filtre cheval
+  });
+
+  it('session pré-S18 (ni blocs ni flag au miroir) → "-", "-", "❌" (jamais undefined)', async () => {
+    const GET = await freshRoute();
+    getMock.mockResolvedValue(asDocs([RAW_SESSION])); // counts SANS amontCoeur/aval
+    const body = await (await GET(req(`Bearer ${TOKEN}`, '?blocsCheval=1'))).json();
+
+    expect(body.rows[0].slice(-3)).toEqual([EMPTY_DISPLAY, EMPTY_DISPLAY, '❌']);
+  });
+
+  it('blocsCheval fait partie de la CLÉ DE CACHE (sinon une payload 28 col. servirait un appel 31 col.)', async () => {
+    const GET = await freshRoute();
+    await GET(req(`Bearer ${TOKEN}`)); // sans flag
+    await GET(req(`Bearer ${TOKEN}`, '?blocsCheval=1')); // clé ≠ → nouvelle lecture
+    expect(getMock).toHaveBeenCalledTimes(2);
+
+    const sansFlag = await (await GET(req(`Bearer ${TOKEN}`))).json(); // re-servi par le cache
+    const avecFlag = await (await GET(req(`Bearer ${TOKEN}`, '?blocsCheval=1'))).json();
+    expect(getMock).toHaveBeenCalledTimes(2);
+    expect(sansFlag.headers).toHaveLength(SESSIONS_SHEET_HEADERS.length); // pas contaminé
+    expect(avecFlag.headers).toHaveLength(SESSIONS_SHEET_HEADERS.length + 3);
+  });
+
+  it('valeur autre que "1" → flag INACTIF (même convention que andpcOnly)', async () => {
+    const GET = await freshRoute();
+    for (const v of ['0', 'true', 'oui', '']) {
+      const body = await (await GET(req(`Bearer ${TOKEN}`, `?blocsCheval=${v}`))).json();
+      expect(body.headers).toEqual([...SESSIONS_SHEET_HEADERS]);
+    }
   });
 });

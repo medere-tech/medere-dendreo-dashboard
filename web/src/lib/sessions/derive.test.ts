@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import type { SessionDoc } from '@/lib/firestore/sessions';
+import { EMPTY_COUNTS, type SessionDoc } from '@/lib/firestore/sessions';
 import {
   applyFilters,
   datePresetRange,
@@ -37,6 +37,7 @@ function make(over: Partial<SessionDoc> & { idAdf: string }): SessionDoc {
     totalParticipants: over.totalParticipants ?? 0,
     format: over.format ?? 'Mixte',
     aCheval: over.aCheval ?? false,
+    facturableAnneeN: over.facturableAnneeN ?? false, // S18
     eppAmontConnecte: over.eppAmontConnecte ?? false,
     eppAvalConnecte: over.eppAvalConnecte ?? false,
     eligibleDpc: over.eligibleDpc ?? true,
@@ -47,7 +48,11 @@ function make(over: Partial<SessionDoc> & { idAdf: string }): SessionDoc {
     factureDateEnvoi: over.factureDateEnvoi ?? null,
     factureMontantHt: over.factureMontantHt ?? null,
     factureDatePaiement: over.factureDatePaiement ?? null,
-    counts: over.counts ?? { envoyes: 0, signes: 0, nonSignes: 0, participantsConcernes: 0, participantsARelancer: 0 },
+    facture1DateEnvoi: over.facture1DateEnvoi ?? null,
+    facture1DatePaiement: over.facture1DatePaiement ?? null,
+    facture2DateEnvoi: over.facture2DateEnvoi ?? null,
+    facture2DatePaiement: over.facture2DatePaiement ?? null,
+    counts: over.counts ?? { ...EMPTY_COUNTS, envoyes: 0, signes: 0, nonSignes: 0, participantsConcernes: 0, participantsARelancer: 0 },
     oldestPendingSentDate: over.oldestPendingSentDate ?? null,
     lastSyncedAt: over.lastSyncedAt ?? '2026-06-01T00:00:00',
     source: over.source ?? 'dendreo',
@@ -62,7 +67,7 @@ function broken(idAdf: string, over: Partial<SessionDoc> = {}): SessionDoc {
 
 describe('robustesse : session avec counts=undefined (doc mirror incomplet)', () => {
   it('sortSessions urgence : aucun throw, la session sans counts est traitée comme 0', () => {
-    const withRelances = make({ idAdf: '1', counts: { envoyes: 3, signes: 0, nonSignes: 3, participantsConcernes: 3, participantsARelancer: 3 } });
+    const withRelances = make({ idAdf: '1', counts: { ...EMPTY_COUNTS, envoyes: 3, signes: 0, nonSignes: 3, participantsConcernes: 3, participantsARelancer: 3 } });
     const incomplete = broken('2');
     expect(() => sortSessions([incomplete, withRelances], { key: 'urgence', dir: 'desc' })).not.toThrow();
     const sorted = sortSessions([incomplete, withRelances], { key: 'urgence', dir: 'desc' });
@@ -75,7 +80,7 @@ describe('robustesse : session avec counts=undefined (doc mirror incomplet)', ()
 
   it('applyFilters hasRelances : session sans counts = 0 relance → exclue, sans throw', () => {
     const rows = applyFilters(
-      [broken('a'), make({ idAdf: 'b', counts: { envoyes: 1, signes: 0, nonSignes: 1, participantsConcernes: 1, participantsARelancer: 1 } })],
+      [broken('a'), make({ idAdf: 'b', counts: { ...EMPTY_COUNTS, envoyes: 1, signes: 0, nonSignes: 1, participantsConcernes: 1, participantsARelancer: 1 } })],
       F({ hasRelances: true }),
       TODAY,
     );
@@ -139,8 +144,8 @@ describe('matchesSearch', () => {
 
 describe('applyFilters', () => {
   const list = [
-    make({ idAdf: '1', etape: 'Réalisation', counts: { envoyes: 3, signes: 1, nonSignes: 2, participantsConcernes: 2, participantsARelancer: 2 } }),
-    make({ idAdf: '2', etape: 'Clôturé', counts: { envoyes: 3, signes: 3, nonSignes: 0, participantsConcernes: 3, participantsARelancer: 0 } }),
+    make({ idAdf: '1', etape: 'Réalisation', counts: { ...EMPTY_COUNTS, envoyes: 3, signes: 1, nonSignes: 2, participantsConcernes: 2, participantsARelancer: 2 } }),
+    make({ idAdf: '2', etape: 'Clôturé', counts: { ...EMPTY_COUNTS, envoyes: 3, signes: 3, nonSignes: 0, participantsConcernes: 3, participantsARelancer: 0 } }),
   ];
   it('filtre étape', () => {
     expect(applyFilters(list, F({ etape: 'Clôturé' }), TODAY).map((s) => s.idAdf)).toEqual(['2']);
@@ -201,9 +206,9 @@ describe('applyFilters — filtres Ops S5.3', () => {
 
   it('combinaison ET : format + à cheval + a des relances', () => {
     const list = [
-      make({ idAdf: 'ok', format: 'Mixte', aCheval: true, counts: { envoyes: 2, signes: 0, nonSignes: 2, participantsConcernes: 2, participantsARelancer: 2 } }),
-      make({ idAdf: 'ko_format', format: 'Présentiel', aCheval: true, counts: { envoyes: 2, signes: 0, nonSignes: 2, participantsConcernes: 2, participantsARelancer: 2 } }),
-      make({ idAdf: 'ko_norelance', format: 'Mixte', aCheval: true, counts: { envoyes: 2, signes: 2, nonSignes: 0, participantsConcernes: 2, participantsARelancer: 0 } }),
+      make({ idAdf: 'ok', format: 'Mixte', aCheval: true, counts: { ...EMPTY_COUNTS, envoyes: 2, signes: 0, nonSignes: 2, participantsConcernes: 2, participantsARelancer: 2 } }),
+      make({ idAdf: 'ko_format', format: 'Présentiel', aCheval: true, counts: { ...EMPTY_COUNTS, envoyes: 2, signes: 0, nonSignes: 2, participantsConcernes: 2, participantsARelancer: 2 } }),
+      make({ idAdf: 'ko_norelance', format: 'Mixte', aCheval: true, counts: { ...EMPTY_COUNTS, envoyes: 2, signes: 2, nonSignes: 0, participantsConcernes: 2, participantsARelancer: 0 } }),
     ];
     expect(applyFilters(list, F({ formats: ['Mixte'], aCheval: true, hasRelances: true }), TODAY).map((s) => s.idAdf)).toEqual(['ok']);
   });
@@ -235,10 +240,10 @@ describe('isEnRetard / datePresetRange / hasActiveFilters', () => {
 describe('sortSessions — urgence (défaut)', () => {
   it('plus d\'à-relancer d\'abord, puis plus ancienne demande, null en bas', () => {
     const list = [
-      make({ idAdf: 'A', counts: { envoyes: 1, signes: 0, nonSignes: 1, participantsConcernes: 1, participantsARelancer: 1 }, oldestPendingSentDate: '2026-05-01T00:00:00' }),
-      make({ idAdf: 'B', counts: { envoyes: 3, signes: 0, nonSignes: 3, participantsConcernes: 3, participantsARelancer: 3 }, oldestPendingSentDate: '2026-04-01T00:00:00' }),
-      make({ idAdf: 'C', counts: { envoyes: 1, signes: 0, nonSignes: 1, participantsConcernes: 1, participantsARelancer: 1 }, oldestPendingSentDate: '2026-01-01T00:00:00' }),
-      make({ idAdf: 'D', counts: { envoyes: 5, signes: 5, nonSignes: 0, participantsConcernes: 5, participantsARelancer: 0 }, oldestPendingSentDate: null }),
+      make({ idAdf: 'A', counts: { ...EMPTY_COUNTS, envoyes: 1, signes: 0, nonSignes: 1, participantsConcernes: 1, participantsARelancer: 1 }, oldestPendingSentDate: '2026-05-01T00:00:00' }),
+      make({ idAdf: 'B', counts: { ...EMPTY_COUNTS, envoyes: 3, signes: 0, nonSignes: 3, participantsConcernes: 3, participantsARelancer: 3 }, oldestPendingSentDate: '2026-04-01T00:00:00' }),
+      make({ idAdf: 'C', counts: { ...EMPTY_COUNTS, envoyes: 1, signes: 0, nonSignes: 1, participantsConcernes: 1, participantsARelancer: 1 }, oldestPendingSentDate: '2026-01-01T00:00:00' }),
+      make({ idAdf: 'D', counts: { ...EMPTY_COUNTS, envoyes: 5, signes: 5, nonSignes: 0, participantsConcernes: 5, participantsARelancer: 0 }, oldestPendingSentDate: null }),
     ];
     const out = sortSessions(list, { key: 'urgence', dir: 'desc' }).map((s) => s.idAdf);
     expect(out).toEqual(['B', 'C', 'A', 'D']); // B(3) puis pending=1 le plus vieux (C avant A), puis D(0)
@@ -259,8 +264,8 @@ describe('sortSessions — colonne', () => {
   });
   it('colonne "nonSignes" (à relancer) desc', () => {
     const l = [
-      make({ idAdf: '1', counts: { envoyes: 2, signes: 1, nonSignes: 1, participantsConcernes: 2, participantsARelancer: 1 } }),
-      make({ idAdf: '2', counts: { envoyes: 5, signes: 0, nonSignes: 5, participantsConcernes: 5, participantsARelancer: 5 } }),
+      make({ idAdf: '1', counts: { ...EMPTY_COUNTS, envoyes: 2, signes: 1, nonSignes: 1, participantsConcernes: 2, participantsARelancer: 1 } }),
+      make({ idAdf: '2', counts: { ...EMPTY_COUNTS, envoyes: 5, signes: 0, nonSignes: 5, participantsConcernes: 5, participantsARelancer: 5 } }),
     ];
     expect(sortSessions(l, { key: 'nonSignes', dir: 'desc' }).map((s) => s.idAdf)).toEqual(['2', '1']);
   });
@@ -331,9 +336,9 @@ describe('isCockpitVisible — terminée (TZ Paris injectée)', () => {
 describe('deriveSessions — intégration', () => {
   it('filtre → tri urgence → pagination + étapes', () => {
     const list = [
-      make({ idAdf: '1', etape: 'Réalisation', counts: { envoyes: 2, signes: 0, nonSignes: 2, participantsConcernes: 2, participantsARelancer: 2 }, oldestPendingSentDate: '2026-03-01T00:00:00' }),
-      make({ idAdf: '2', etape: 'Réalisation', counts: { envoyes: 5, signes: 0, nonSignes: 5, participantsConcernes: 5, participantsARelancer: 5 }, oldestPendingSentDate: '2026-02-01T00:00:00' }),
-      make({ idAdf: '3', etape: 'Clôturé', counts: { envoyes: 4, signes: 4, nonSignes: 0, participantsConcernes: 4, participantsARelancer: 0 } }),
+      make({ idAdf: '1', etape: 'Réalisation', counts: { ...EMPTY_COUNTS, envoyes: 2, signes: 0, nonSignes: 2, participantsConcernes: 2, participantsARelancer: 2 }, oldestPendingSentDate: '2026-03-01T00:00:00' }),
+      make({ idAdf: '2', etape: 'Réalisation', counts: { ...EMPTY_COUNTS, envoyes: 5, signes: 0, nonSignes: 5, participantsConcernes: 5, participantsARelancer: 5 }, oldestPendingSentDate: '2026-02-01T00:00:00' }),
+      make({ idAdf: '3', etape: 'Clôturé', counts: { ...EMPTY_COUNTS, envoyes: 4, signes: 4, nonSignes: 0, participantsConcernes: 4, participantsARelancer: 0 } }),
     ];
     const d = deriveSessions(list, {
       filters: F({ etape: 'Réalisation', hasRelances: true }),
@@ -350,7 +355,7 @@ describe('deriveSessions — intégration', () => {
 
   it('cockpit : exclut sessions à venir + en échec, expose cockpitTotal', () => {
     const list = [
-      make({ idAdf: 'past', etape: 'Réalisation', dateFin: '2026-07-01T00:00:00', counts: { envoyes: 1, signes: 0, nonSignes: 1, participantsConcernes: 1, participantsARelancer: 1 }, oldestPendingSentDate: '2026-06-01T00:00:00' }),
+      make({ idAdf: 'past', etape: 'Réalisation', dateFin: '2026-07-01T00:00:00', counts: { ...EMPTY_COUNTS, envoyes: 1, signes: 0, nonSignes: 1, participantsConcernes: 1, participantsARelancer: 1 }, oldestPendingSentDate: '2026-06-01T00:00:00' }),
       make({ idAdf: 'today', etape: 'Réalisation', dateFin: '2026-07-03T23:00:00' }),
       make({ idAdf: 'future', etape: 'Réalisation', dateFin: '2026-07-10T00:00:00' }),
       make({ idAdf: 'echec', etape: 'Echec', dateFin: '2026-01-01T00:00:00' }),

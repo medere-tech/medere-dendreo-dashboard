@@ -1,6 +1,11 @@
 import { getDb } from '@shared/firebase/admin';
 import { toSessionDoc, type SessionDoc } from '@/lib/firestore/sessions';
-import { SESSIONS_SHEET_HEADERS, sessionToSheetRow } from '@/lib/sessions/export';
+import {
+  SESSIONS_SHEET_HEADERS,
+  SESSIONS_SHEET_HEADERS_CHEVAL2026,
+  sessionToSheetRow,
+  sessionToSheetRowCheval2026,
+} from '@/lib/sessions/export';
 import { isEchecEtape } from '@/lib/sessions/derive';
 import { isSheetExportAuthorized } from '@/lib/server/sheet-auth';
 import { todayInParis } from '@/lib/time';
@@ -33,6 +38,12 @@ import { todayInParis } from '@/lib/time';
  *  Ce mode NEUTRALISE `debutFrom` (une session à cheval commence l'année d'avant : une
  *  borne basse sur `dateDebut` calée sur l'année de fin les éliminerait toutes). Tous les
  *  AUTRES filtres passés continuent de s'appliquer normalement.
+ * Colonnes de bloc (S18, optionnel, défaut = inactif → rétrocompatible) :
+ *  - `?blocsCheval=1` → ajoute 3 colonnes EN FIN ("Amont+cœur signés", "Aval signés",
+ *    "Facturable année N") pour l'onglet "Sessions à cheval 2026 - Auto". Ce flag ne
+ *    FILTRE rien : il ne change que la PRÉSENTATION (en-têtes + lignes). Il est
+ *    INDÉPENDANT de `debutYear` → l'onglet 25/26 figé (`debutYear=2025` sans le flag)
+ *    reçoit exactement les mêmes 28 colonnes qu'avant S18.
  * Dates sur `dateFin`, jour Paris naïf `slice(0,10)`, jamais d'UTC.
  * Lignes triées par `dateFin` CROISSANTE (plus anciennes d'abord ; égalité →
  * `numeroComplet` pour un ordre déterministe).
@@ -94,6 +105,13 @@ interface Filters {
   andpcOnly: boolean; // financeurAndpc === true (S11.2)
   avecCompteProduit: boolean; // numeroCompteProduit non vide (S11.2)
   debutYear: string | null; // année(dateDebut) === debutYear ET année(dateFin) === +1 (S16.1)
+  /**
+   * S18 — `?blocsCheval=1` : ajoute 3 colonnes EN FIN (Amont+cœur signés / Aval signés /
+   * Facturable année N) pour l'onglet "Sessions à cheval 2026 - Auto".
+   * INDÉPENDANT de `debutYear` : l'onglet 25/26 FIGÉ (`debutYear=2025` SANS ce flag)
+   * continue de recevoir EXACTEMENT les mêmes en-têtes et les mêmes lignes qu'avant.
+   */
+  blocsCheval: boolean;
 }
 
 /** Le mode « à cheval » est actif → `debutFrom` ne s'applique pas (S16.1). */
@@ -215,9 +233,14 @@ async function buildPayload(filters: Filters, today: string, now: number): Promi
         else noms.push(info.nom); // true (ANDPC) ou null (aucun financement) → à relancer
       }
     }
-    return sessionToSheetRow(s, noms, horsDpc);
+    // S18 : le flag choisit le CONSTRUCTEUR DE LIGNE. Sans lui, c'est la fonction
+    // d'origine, mot pour mot — aucun risque de dérive sur les onglets figés.
+    return filters.blocsCheval
+      ? sessionToSheetRowCheval2026(s, noms, horsDpc)
+      : sessionToSheetRow(s, noms, horsDpc);
   });
-  return { headers: [...SESSIONS_SHEET_HEADERS], rows };
+  const headers = filters.blocsCheval ? SESSIONS_SHEET_HEADERS_CHEVAL2026 : SESSIONS_SHEET_HEADERS;
+  return { headers: [...headers], rows };
 }
 
 export async function GET(req: Request): Promise<Response> {
@@ -240,13 +263,17 @@ export async function GET(req: Request): Promise<Response> {
   if (debutYear !== null && !YEAR_RE.test(debutYear)) {
     return json({ error: 'invalid debutYear (attendu AAAA)' }, 400); // ne lit pas Firestore
   }
-  const filters: Filters = { finFrom, debutFrom, andpcOnly, avecCompteProduit, debutYear };
+  const blocsCheval = params.get('blocsCheval') === '1'; // S18 (même convention que andpcOnly)
+  const filters: Filters = { finFrom, debutFrom, andpcOnly, avecCompteProduit, debutYear, blocsCheval };
 
   try {
     const today = todayInParis(); // recalculé chaque requête → jamais codé en dur
     // Clé de cache = TOUS les filtres + le jour : un appel filtré ne sert jamais un cache
     // d'un autre filtre, et le changement de jour (borne haute) invalide naturellement.
-    const key = `${finFrom ?? 'all'}|${debutFrom ?? 'all'}|${andpcOnly ? '1' : '0'}|${avecCompteProduit ? '1' : '0'}|${debutYear ?? 'all'}|${today}`;
+    // S18 : `blocsCheval` DOIT entrer dans la clé — il change la FORME de la payload
+    // (28 vs 31 colonnes). Sans lui, un appel flaggé pourrait recevoir le payload caché
+    // d'un appel non flaggé (et inversement) → colonnes manquantes dans le Sheet.
+    const key = `${finFrom ?? 'all'}|${debutFrom ?? 'all'}|${andpcOnly ? '1' : '0'}|${avecCompteProduit ? '1' : '0'}|${debutYear ?? 'all'}|${blocsCheval ? '1' : '0'}|${today}`;
     const now = Date.now();
     const hit = cache.get(key);
     if (!isFresh(hit, now)) {

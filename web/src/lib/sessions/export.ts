@@ -1,4 +1,4 @@
-import { EMPTY_COUNTS, type Counts, type SessionDoc } from '@/lib/firestore/sessions';
+import { EMPTY_COUNTS, type BlocCounts, type Counts, type SessionDoc } from '@/lib/firestore/sessions';
 import type { RelanceRow } from './relance';
 import { parisDayOfInstant } from '@/lib/time';
 import { EMPTY_DISPLAY } from '@/lib/format';
@@ -168,6 +168,46 @@ export function sessionToSheetRow(s: SessionDoc, noms: readonly string[] = [], h
     ddmmyyOrDash(s.facture1DatePaiement), // Facture 1 - paiement  (S15)
     ddmmyyOrDash(s.facture2DateEnvoi), // Facture 2 - envoi     (S15)
     ddmmyyOrDash(s.facture2DatePaiement), // Facture 2 - paiement  (S15)
+  ];
+}
+
+// --- ONGLET "Sessions à cheval 2026 - Auto" (S18) — variante du format "sheet" ---
+// 3 colonnes AJOUTÉES EN FIN, servies UNIQUEMENT sur demande explicite de la route
+// (`?blocsCheval=1`). `SESSIONS_SHEET_HEADERS` et `sessionToSheetRow` ne bougent PAS :
+// l'onglet cockpit et l'onglet 25/26 FIGÉ restent identiques au byte près.
+//
+// ⚠ SENS DU "X/Y" — il y en a DEUX dans cet onglet, et ils sont inverses :
+//   - "Attestation manquante" (colonne S6.3)  = nonSignes / envoyes  → ce qui MANQUE
+//   - "Amont+cœur signés" / "Aval signés" (ici) = signes / total      → ce qui EST FAIT
+// D'où le mot « signés » DANS l'en-tête : c'est lui qui lève l'ambiguïté pour la lectrice.
+export const BLOCS_CHEVAL_2026_HEADERS = [
+  'Amont+cœur signés', 'Aval signés', 'Facturable année N',
+] as const;
+export const SESSIONS_SHEET_HEADERS_CHEVAL2026 = [...SESSIONS_SHEET_HEADERS, ...BLOCS_CHEVAL_2026_HEADERS] as const;
+
+/**
+ * Cellule d'un bloc : "{signes}/{total}", donc CE QUI EST SIGNÉ sur le total du bloc.
+ * `total === 0` (bloc absent de la session, ou session pas encore resynchronisée depuis
+ * S18) → EMPTY_DISPLAY : "0/0" laisserait croire à un bloc vide alors qu'on n'en sait rien.
+ */
+export function blocDisplay(b: BlocCounts | undefined): string {
+  const total = b?.total ?? 0;
+  if (total === 0) return EMPTY_DISPLAY;
+  return `${b?.signes ?? 0}/${total}`;
+}
+
+/**
+ * Ligne de l'onglet à cheval 2026 : la ligne "sheet" STANDARD (aucune duplication de
+ * logique — même fonction que le cockpit) + les 3 colonnes de bloc en fin.
+ * "Facturable année N" suit la convention booléenne de la colonne "Cheval?" (✅/❌).
+ */
+export function sessionToSheetRowCheval2026(s: SessionDoc, noms: readonly string[] = [], horsDpcCount = 0): string[] {
+  const c = s.counts ?? EMPTY_COUNTS;
+  return [
+    ...sessionToSheetRow(s, noms, horsDpcCount),
+    blocDisplay(c.amontCoeur),
+    blocDisplay(c.aval),
+    s.facturableAnneeN ? '✅' : '❌',
   ];
 }
 

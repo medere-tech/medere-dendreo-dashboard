@@ -6,11 +6,45 @@ describe('toSessionDoc — normalisation défensive à la lecture', () => {
     const s = toSessionDoc({ idAdf: '2691', numeroComplet: 'ADF_1' });
     expect(s.counts).toEqual(EMPTY_COUNTS);
     expect(s.counts.nonSignes).toBe(0);
+    // S18 : les sous-objets sont des OBJETS complets, jamais undefined.
+    expect(s.counts.amontCoeur).toEqual({ signes: 0, total: 0 });
+    expect(s.counts.aval).toEqual({ signes: 0, total: 0 });
   });
 
   it('counts PARTIEL → champs manquants comblés à 0', () => {
     const s = toSessionDoc({ idAdf: '1', numeroComplet: 'ADF_1', counts: { nonSignes: 5 } });
-    expect(s.counts).toEqual({ envoyes: 0, signes: 0, nonSignes: 5, participantsConcernes: 0, participantsARelancer: 0 });
+    expect(s.counts).toEqual({
+      envoyes: 0, signes: 0, nonSignes: 5, participantsConcernes: 0, participantsARelancer: 0,
+      amontCoeur: { signes: 0, total: 0 }, aval: { signes: 0, total: 0 },
+    });
+  });
+
+  // --- S18 : les sous-objets par bloc SURVIVENT à la lecture -------------------
+  it('counts.amontCoeur / counts.aval sont conservés (plus supprimés à la lecture)', () => {
+    const s = toSessionDoc({
+      idAdf: '3818', numeroComplet: 'ADF_3818',
+      counts: {
+        envoyes: 13, signes: 5, nonSignes: 8, participantsConcernes: 13, participantsARelancer: 8,
+        amontCoeur: { signes: 3, total: 5 }, aval: { signes: 2, total: 8 },
+      },
+    });
+    expect(s.counts.amontCoeur).toEqual({ signes: 3, total: 5 });
+    expect(s.counts.aval).toEqual({ signes: 2, total: 8 });
+  });
+
+  it('sous-objet bloc PARTIEL ou non-objet → 0 comblé (jamais NaN, jamais undefined)', () => {
+    const s = toSessionDoc({
+      idAdf: '1', numeroComplet: 'ADF_1',
+      counts: { amontCoeur: { signes: 2 }, aval: 'pas-un-objet' },
+    });
+    expect(s.counts.amontCoeur).toEqual({ signes: 2, total: 0 });
+    expect(s.counts.aval).toEqual({ signes: 0, total: 0 });
+  });
+
+  it('facturableAnneeN : absent → false ; true conservé ; valeur non booléenne → false', () => {
+    expect(toSessionDoc({ idAdf: '1', numeroComplet: 'ADF_1' }).facturableAnneeN).toBe(false);
+    expect(toSessionDoc({ idAdf: '1', numeroComplet: 'ADF_1', facturableAnneeN: true }).facturableAnneeN).toBe(true);
+    expect(toSessionDoc({ idAdf: '1', numeroComplet: 'ADF_1', facturableAnneeN: 'oui' }).facturableAnneeN).toBe(false);
   });
 
   it('numeroSessionDpc / numeroCompteProduit absents → null (jamais undefined)', () => {

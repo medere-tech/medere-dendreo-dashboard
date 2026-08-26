@@ -17,6 +17,15 @@ export interface Counts {
   nonSignes: number; // = envoyes − signes (à relancer)
   participantsConcernes: number; // participants distincts avec ≥ 1 attestation
   participantsARelancer: number; // participants distincts avec ≥ 1 attestation non signée
+  // --- S18 : ventilation par BLOC pédagogique (signature-rule.md §4 bis) -------
+  amontCoeur: BlocCounts; // attestations dont le bloc N'EST PAS 'aval' (amont + cœur)
+  aval: BlocCounts; // attestations dont le bloc est 'aval'
+}
+
+/** Signées / total d'un bloc pédagogique (S18). Miroir de `src/firebase/types.ts`. */
+export interface BlocCounts {
+  signes: number;
+  total: number;
 }
 
 export interface SessionDoc {
@@ -34,6 +43,7 @@ export interface SessionDoc {
   totalParticipants: number;
   format: string; // libellé Format (Présentiel/Mixte/E-learning/Classe virtuelle) — S5.1b
   aCheval: boolean; // année(dateDebut) != année(dateFin)
+  facturableAnneeN: boolean; // S18 — tous les modules non-aval (cat != 21) ont leur date_fin passée (jour Paris)
   eppAmontConnecte: boolean; // module EPP amont (cat 22) avec heures connectées > 0
   eppAvalConnecte: boolean; // module EPP aval (cat 21) avec heures connectées > 0
   eligibleDpc: boolean; // eligible_dpc="1" du module cœur — S6.2
@@ -66,6 +76,9 @@ export const EMPTY_COUNTS: Counts = {
   nonSignes: 0,
   participantsConcernes: 0,
   participantsARelancer: 0,
+  // S18 : objets COMPLETS, jamais undefined → `c.amontCoeur.signes` est toujours lisible.
+  amontCoeur: { signes: 0, total: 0 },
+  aval: { signes: 0, total: 0 },
 };
 
 // --- Normalisation à la LECTURE (défensif) -----------------------------------
@@ -79,6 +92,12 @@ const asBool = (v: unknown): boolean => v === true; // défaut false pour un doc
 const asStrArray = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []); // défaut [] (doc pré-S12.1)
 const asTriBool = (v: unknown): boolean | null => (v === true ? true : v === false ? false : null); // S11.1 financeurAndpc
 
+/** S18 — sous-objet {signes,total} défensif : absent/partiel/non-objet → 0 partout. */
+function asBlocCounts(raw: unknown): BlocCounts {
+  const b = (raw ?? {}) as Partial<Record<keyof BlocCounts, unknown>>;
+  return { signes: asNum(b.signes), total: asNum(b.total) };
+}
+
 function normalizeCounts(raw: unknown): Counts {
   const c = (raw ?? {}) as Partial<Record<keyof Counts, unknown>>;
   return {
@@ -87,6 +106,9 @@ function normalizeCounts(raw: unknown): Counts {
     nonSignes: asNum(c.nonSignes),
     participantsConcernes: asNum(c.participantsConcernes),
     participantsARelancer: asNum(c.participantsARelancer),
+    // S18 : absents d'un doc pré-S18 (ou d'une session pas encore resynchronisée) → 0/0.
+    amontCoeur: asBlocCounts(c.amontCoeur),
+    aval: asBlocCounts(c.aval),
   };
 }
 
@@ -112,6 +134,7 @@ export function toSessionDoc(raw: DocumentData): SessionDoc {
     totalParticipants: asNum(raw.totalParticipants),
     format: asStr(raw.format),
     aCheval: asBool(raw.aCheval),
+    facturableAnneeN: asBool(raw.facturableAnneeN), // S18 : doc pré-S18 (champ absent) → false
     eppAmontConnecte: asBool(raw.eppAmontConnecte),
     eppAvalConnecte: asBool(raw.eppAvalConnecte),
     eligibleDpc: asBool(raw.eligibleDpc),

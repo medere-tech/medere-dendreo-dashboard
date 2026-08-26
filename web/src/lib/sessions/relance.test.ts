@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import type { SessionDoc, SignatureDoc } from '@/lib/firestore/sessions';
+import { EMPTY_COUNTS, type SessionDoc, type SignatureDoc } from '@/lib/firestore/sessions';
 import {
   applyRelanceFilters,
   buildRelanceRows,
@@ -53,6 +53,7 @@ function session(over: Partial<SessionDoc> & { idAdf: string }): SessionDoc {
     totalParticipants: 0,
     format: 'Mixte',
     aCheval: false,
+    facturableAnneeN: false, // S18
     eppAmontConnecte: false,
     eppAvalConnecte: false,
     eligibleDpc: true,
@@ -63,7 +64,11 @@ function session(over: Partial<SessionDoc> & { idAdf: string }): SessionDoc {
     factureDateEnvoi: null,
     factureMontantHt: null,
     factureDatePaiement: null,
-    counts: { envoyes: 0, signes: 0, nonSignes: 0, participantsConcernes: 0, participantsARelancer: 0 },
+    facture1DateEnvoi: null,
+    facture1DatePaiement: null,
+    facture2DateEnvoi: null,
+    facture2DatePaiement: null,
+    counts: { ...EMPTY_COUNTS, envoyes: 0, signes: 0, nonSignes: 0, participantsConcernes: 0, participantsARelancer: 0 },
     oldestPendingSentDate: null,
     lastSyncedAt: '2026-06-01T00:00:00',
     source: 'dendreo',
