@@ -728,12 +728,33 @@ describe('GET /api/export/sheet?blocsCheval=1 (S18)', () => {
     expect(body.rows).toHaveLength(1); // 2026 → 2027 : la session passe le filtre cheval
   });
 
-  it('session pré-S18 (ni blocs ni flag au miroir) → "-", "-", "❌" (jamais undefined)', async () => {
+  it('counts SANS sous-objets de bloc → "-", "-" (cellules lisibles, jamais undefined)', async () => {
     const GET = await freshRoute();
-    getMock.mockResolvedValue(asDocs([RAW_SESSION])); // counts SANS amontCoeur/aval
+    // Session À CHEVAL + `facturableAnneeN: true` → elle PASSE le filtre cheval ; ses
+    // `counts` n'ont pas amontCoeur/aval (recalc antérieur) → les 2 cellules valent "-".
+    // Ce test porte sur le RENDU des cellules, pas sur le filtrage (cf. test suivant).
+    getMock.mockResolvedValue(asDocs([{
+      ...RAW_SESSION, facturableAnneeN: true,
+      dateDebut: '2026-07-08T00:00:00', dateFin: '2027-01-15T23:59:59',
+    }]));
     const body = await (await GET(req(`Bearer ${TOKEN}`, '?blocsCheval=1'))).json();
 
-    expect(body.rows[0].slice(-3)).toEqual([EMPTY_DISPLAY, EMPTY_DISPLAY, '❌']);
+    expect(body.rows).toHaveLength(1);
+    expect(body.rows[0].slice(-3)).toEqual([EMPTY_DISPLAY, EMPTY_DISPLAY, '✅']);
+  });
+
+  it('doc pré-S18 (AUCUN champ facturableAnneeN) → ABSENT en mode cheval', async () => {
+    const GET = await freshRoute();
+    // Session BIEN à cheval (donc non exclue par ce critère-là) mais sans le champ S18 :
+    // c'est `facturableAnneeN` qui la retire, et rien d'autre.
+    getMock.mockResolvedValue(asDocs([{
+      ...RAW_SESSION, dateDebut: '2026-07-08T00:00:00', dateFin: '2027-01-15T23:59:59',
+    }]));
+    const body = await (await GET(req(`Bearer ${TOKEN}`, '?blocsCheval=1'))).json();
+
+    // Conséquence ASSUMÉE du remplacement STRICT : tant que le miroir n'est pas
+    // resynchronisé (S18), la session ne remonte pas — même si elle est terminée.
+    expect(body.rows).toHaveLength(0);
   });
 
   it('blocsCheval fait partie de la CLÉ DE CACHE (sinon une payload 28 col. servirait un appel 31 col.)', async () => {
@@ -755,5 +776,213 @@ describe('GET /api/export/sheet?blocsCheval=1 (S18)', () => {
       const body = await (await GET(req(`Bearer ${TOKEN}`, `?blocsCheval=${v}`))).json();
       expect(body.headers).toEqual([...SESSIONS_SHEET_HEADERS]);
     }
+  });
+});
+
+// --- S18 : PÉRIMÈTRE du mode cheval — facturableAnneeN REMPLACE la borne haute ---
+// `today` RÉALISTE (pas le 2999-12-31 neutre des autres blocs) : c'est le seul moyen de
+// prouver qu'une dateFin FUTURE passe en mode cheval et bloque hors mode cheval.
+describe('GET /api/export/sheet — mode cheval : facturableAnneeN remplace la borne haute (S18)', () => {
+  const TODAY = '2026-08-26';
+
+  /** Session à cheval 2026→2027 : dateFin FUTURE (l'aval finit en janvier 2027). */
+  const cheval2026 = (over: Record<string, unknown> = {}) => ({
+    ...RAW_SESSION,
+    idAdf: '3818', dateDebut: '2026-07-08T00:00:00', dateFin: '2027-01-15T23:59:59',
+    aCheval: true, facturableAnneeN: true, financeurAndpc: true, numeroCompteProduit: '92622525458',
+    counts: {
+      envoyes: 9, signes: 4, nonSignes: 5, participantsConcernes: 9, participantsARelancer: 5,
+      amontCoeur: { signes: 4, total: 9 }, aval: { signes: 0, total: 0 },
+    },
+    ...over,
+  });
+
+  beforeEach(() => {
+    getMock.mockReset();
+    process.env.SHEET_EXPORT_TOKEN = TOKEN;
+    setToday(TODAY);
+  });
+
+  const idsDe = async (query: string): Promise<string[]> => {
+    const GET = await freshRoute();
+    const body = await (await GET(req(`Bearer ${TOKEN}`, query))).json();
+    return body.rows.map((r: string[]) => r[0]);
+  };
+
+  it('1. facturableAnneeN=true + dateFin FUTURE + blocsCheval=1 → PRÉSENTE (cas 3818)', async () => {
+    getMock.mockResolvedValue(asDocs([cheval2026()]));
+    expect(await idsDe('?debutYear=2026&blocsCheval=1')).toEqual(['3818']);
+  });
+
+  it('2. la MÊME session SANS blocsCheval → ABSENTE (la borne haute joue toujours)', async () => {
+    getMock.mockResolvedValue(asDocs([cheval2026()]));
+    expect(await idsDe('?debutYear=2026')).toEqual([]);
+  });
+
+  it('3. facturableAnneeN=false + dateFin future + blocsCheval=1 → ABSENTE', async () => {
+    getMock.mockResolvedValue(asDocs([cheval2026({ facturableAnneeN: false })]));
+    expect(await idsDe('?debutYear=2026&blocsCheval=1')).toEqual([]);
+  });
+
+  it('4. REMPLACEMENT STRICT : session TERMINÉE mais facturableAnneeN=false → ABSENTE', async () => {
+    // dateFin 2026-01-15 <= today : elle passerait la borne haute d'origine haut la main.
+    // En mode cheval la borne haute n'existe plus → seul facturableAnneeN décide → exclue.
+    const terminee = cheval2026({
+      idAdf: 'terminee', dateDebut: '2025-07-08T00:00:00', dateFin: '2026-01-15T23:59:59',
+      facturableAnneeN: false,
+    });
+    getMock.mockResolvedValue(asDocs([terminee]));
+    expect(await idsDe('?blocsCheval=1')).toEqual([]);
+    // ...et la preuve qu'elle EST bien visible dans le régime d'origine :
+    expect(await idsDe('')).toEqual(['terminee']);
+  });
+
+  it('5. NON-RÉGRESSION onglet 25/26 : debutYear=2025 SANS blocsCheval + session future → ABSENTE', async () => {
+    const cheval2025Future = cheval2026({
+      idAdf: '2025fut', dateDebut: '2025-09-10T00:00:00', dateFin: '2026-12-20T23:59:59',
+      facturableAnneeN: true, // même avec le flag à true, la borne haute doit primer hors mode cheval
+    });
+    getMock.mockResolvedValue(asDocs([cheval2025Future]));
+    expect(await idsDe('?debutYear=2025')).toEqual([]);
+  });
+
+  it('6a. andpcOnly=1 mord TOUJOURS en mode cheval', async () => {
+    getMock.mockResolvedValue(asDocs([cheval2026({ financeurAndpc: false })]));
+    expect(await idsDe('?blocsCheval=1&andpcOnly=1')).toEqual([]);
+    expect(await idsDe('?blocsCheval=1')).toEqual(['3818']); // sans le filtre, elle sort
+  });
+
+  it('6b. avecCompteProduit=1 mord TOUJOURS en mode cheval', async () => {
+    getMock.mockResolvedValue(asDocs([cheval2026({ numeroCompteProduit: '' })]));
+    expect(await idsDe('?blocsCheval=1&avecCompteProduit=1')).toEqual([]);
+  });
+
+  it('6c. étape "Échec" exclut TOUJOURS en mode cheval', async () => {
+    getMock.mockResolvedValue(asDocs([cheval2026({ etape: 'Échec commercial' })]));
+    expect(await idsDe('?blocsCheval=1')).toEqual([]);
+  });
+
+  it('6d. debutYear mord TOUJOURS en mode cheval (2026→2027 exclue par debutYear=2025)', async () => {
+    getMock.mockResolvedValue(asDocs([cheval2026()]));
+    expect(await idsDe('?debutYear=2025&blocsCheval=1')).toEqual([]);
+    expect(await idsDe('?debutYear=2026&blocsCheval=1')).toEqual(['3818']);
+  });
+
+  it('6e. finFrom mord TOUJOURS en mode cheval', async () => {
+    getMock.mockResolvedValue(asDocs([cheval2026()]));
+    expect(await idsDe('?blocsCheval=1&finFrom=2027-06-01')).toEqual([]); // dateFin 2027-01-15 < borne
+    expect(await idsDe('?blocsCheval=1&finFrom=2027-01-01')).toEqual(['3818']);
+  });
+
+  it('7. tri INCHANGÉ : les dateFin futures se rangent en dernier (dateFin croissante)', async () => {
+    getMock.mockResolvedValue(asDocs([
+      cheval2026({ idAdf: 'fin2027', dateFin: '2027-01-15T23:59:59' }),
+      cheval2026({ idAdf: 'fin2026', dateDebut: '2025-09-01T00:00:00', dateFin: '2026-03-01T23:59:59' }),
+    ]));
+    expect(await idsDe('?blocsCheval=1')).toEqual(['fin2026', 'fin2027']);
+  });
+});
+
+// --- S18 : debutYearFrom — onglet cheval CUMULÉ (tous millésimes >= plancher) -----
+describe('GET /api/export/sheet — debutYearFrom : cumul multi-millésimes (S18)', () => {
+  const TODAY = '2026-08-26';
+
+  /** Session à cheval `debut`→`debut+1`, facturable, sans autre motif d'exclusion. */
+  const chevalDe = (debut: number, over: Record<string, unknown> = {}) => ({
+    ...RAW_SESSION,
+    idAdf: `${String(debut).slice(2)}-${String(debut + 1).slice(2)}`, // ex. "26-27"
+    dateDebut: `${debut}-09-10T00:00:00`,
+    dateFin: `${debut + 1}-01-15T23:59:59`,
+    aCheval: true, facturableAnneeN: true, financeurAndpc: true, numeroCompteProduit: '92622525458',
+    counts: {
+      envoyes: 9, signes: 4, nonSignes: 5, participantsConcernes: 9, participantsARelancer: 5,
+      amontCoeur: { signes: 4, total: 9 }, aval: { signes: 0, total: 0 },
+    },
+    ...over,
+  });
+
+  beforeEach(() => {
+    getMock.mockReset();
+    process.env.SHEET_EXPORT_TOKEN = TOKEN;
+    setToday(TODAY);
+  });
+
+  const idsDe = async (query: string): Promise<string[]> => {
+    const GET = await freshRoute();
+    const body = await (await GET(req(`Bearer ${TOKEN}`, query))).json();
+    return body.rows.map((r: string[]) => r[0]);
+  };
+
+  it('26/27 facturable + debutYearFrom=2026 → PRÉSENTE', async () => {
+    getMock.mockResolvedValue(asDocs([chevalDe(2026)]));
+    expect(await idsDe('?debutYearFrom=2026&blocsCheval=1')).toEqual(['26-27']);
+  });
+
+  it('27/28 facturable + debutYearFrom=2026 → PRÉSENTE (cumul AUTOMATIQUE, sans nouvel onglet)', async () => {
+    getMock.mockResolvedValue(asDocs([chevalDe(2027)]));
+    expect(await idsDe('?debutYearFrom=2026&blocsCheval=1')).toEqual(['27-28']);
+  });
+
+  it('25/26 facturable + debutYearFrom=2026 → ABSENTE (plancher)', async () => {
+    getMock.mockResolvedValue(asDocs([chevalDe(2025)]));
+    expect(await idsDe('?debutYearFrom=2026&blocsCheval=1')).toEqual([]);
+  });
+
+  it('24/25 → ABSENTE (plancher)', async () => {
+    getMock.mockResolvedValue(asDocs([chevalDe(2024)]));
+    expect(await idsDe('?debutYearFrom=2026&blocsCheval=1')).toEqual([]);
+  });
+
+  it('LE CAS D\'USAGE : 24/25, 25/26, 26/27, 27/28 mélangées → seules 26/27 et 27/28 sortent', async () => {
+    getMock.mockResolvedValue(asDocs([chevalDe(2024), chevalDe(2025), chevalDe(2026), chevalDe(2027)]));
+    expect(await idsDe('?debutYearFrom=2026&blocsCheval=1')).toEqual(['26-27', '27-28']);
+  });
+
+  it('estCheval : 2026→2027 OUI ; 2026→2026 NON ; 2025→2027 NON (écart de 2 ans)', async () => {
+    getMock.mockResolvedValue(asDocs([
+      chevalDe(2026, { idAdf: 'cheval-1an' }), // 2026-09-10 → 2027-01-15
+      chevalDe(2026, { idAdf: 'meme-annee', dateFin: '2026-12-20T23:59:59' }), // 2026 → 2026
+      chevalDe(2026, { idAdf: 'ecart-2ans', dateDebut: '2025-09-10T00:00:00', dateFin: '2027-01-15T23:59:59' }),
+    ]));
+    // toutes facturables et au-dessus du plancher : seul `estCheval` les départage.
+    expect(await idsDe('?debutYearFrom=2025&blocsCheval=1')).toEqual(['cheval-1an']);
+  });
+
+  it('debutYearFrom SANS blocsCheval → INERTE (le régime normal ne bouge pas)', async () => {
+    // dateFin 2026-01-15 <= today → visible par la borne haute ; le plancher 2027 ne
+    // doit PAS la retirer, puisqu'il n'a d'effet qu'en mode cheval.
+    getMock.mockResolvedValue(asDocs([chevalDe(2025)]));
+    expect(await idsDe('?debutYearFrom=2027')).toEqual(['25-26']);
+  });
+
+  it('debutYearFrom invalide → 400, aucune lecture Firestore', async () => {
+    const GET = await freshRoute();
+    for (const bad of ['26', '2026-01', 'deux-mille-vingt-six', '', '20266']) {
+      const res = await GET(req(`Bearer ${TOKEN}`, `?debutYearFrom=${encodeURIComponent(bad)}&blocsCheval=1`));
+      expect(res.status).toBe(400);
+    }
+    expect(getMock).not.toHaveBeenCalled();
+    expect(pendingGetMock).not.toHaveBeenCalled();
+  });
+
+  it('debutYearFrom fait partie de la CLÉ DE CACHE : planchers distincts → lectures distinctes', async () => {
+    const GET = await freshRoute();
+    getMock.mockResolvedValue(asDocs([chevalDe(2026)]));
+    await GET(req(`Bearer ${TOKEN}`, '?debutYearFrom=2026&blocsCheval=1'));
+    await GET(req(`Bearer ${TOKEN}`, '?debutYearFrom=2027&blocsCheval=1'));
+    expect(getMock).toHaveBeenCalledTimes(2);
+    await GET(req(`Bearer ${TOKEN}`, '?debutYearFrom=2026&blocsCheval=1')); // servi par le cache
+    expect(getMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('NON-RÉGRESSION onglet 25/26 : debutYear=2025 SANS flag ignore debutYearFrom', async () => {
+    // 25/26 terminée : visible par debutYear=2025 exactement comme avant S18, même si
+    // un debutYearFrom=2026 traîne dans l'URL (il n'a d'effet qu'avec blocsCheval).
+    getMock.mockResolvedValue(asDocs([chevalDe(2025)]));
+    expect(await idsDe('?debutYear=2025')).toEqual(['25-26']);
+    expect(await idsDe('?debutYear=2025&debutYearFrom=2026')).toEqual(['25-26']);
+    // et une 26/27 (dateFin future) reste EXCLUE de cet onglet par la borne haute
+    getMock.mockResolvedValue(asDocs([chevalDe(2025), chevalDe(2026)]));
+    expect(await idsDe('?debutYear=2025')).toEqual(['25-26']);
   });
 });

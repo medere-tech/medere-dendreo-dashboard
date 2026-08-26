@@ -20,9 +20,9 @@ import { todayInParis } from '@/lib/time';
  * Visibilité = STRICTEMENT la règle du cockpit (`isCockpitVisible`) + borne basse
  * optionnelle. Une session est renvoyée si :
  *  - elle n'est PAS en étape "Échec" (`isEchecEtape` réutilisée — S10.1d) ; ET
- *  - BORNE HAUTE : `dateFin <= aujourd'hui Paris`, TOUJOURS appliquée → aucune
- *    session future. Recalculée à chaque requête (jamais codée en dur) : change
- *    seule chaque jour ; ET
+ *  - BORNE HAUTE : `dateFin <= aujourd'hui Paris` → aucune session future. Recalculée
+ *    à chaque requête (jamais codée en dur) : change seule chaque jour. Appliquée dans
+ *    TOUS les cas SAUF le mode cheval `?blocsCheval=1` (voir plus bas) ; ET
  *  - `?finFrom=AAAA-MM-JJ` (S10.1b, optionnel) → borne basse. Combiné :
  *    `finFrom <= dateFin <= aujourd'hui`.
  * Filtres V2 (S11.2, optionnels, défaut = inactif → rétrocompatible) :
@@ -38,12 +38,28 @@ import { todayInParis } from '@/lib/time';
  *  Ce mode NEUTRALISE `debutFrom` (une session à cheval commence l'année d'avant : une
  *  borne basse sur `dateDebut` calée sur l'année de fin les éliminerait toutes). Tous les
  *  AUTRES filtres passés continuent de s'appliquer normalement.
- * Colonnes de bloc (S18, optionnel, défaut = inactif → rétrocompatible) :
- *  - `?blocsCheval=1` → ajoute 3 colonnes EN FIN ("Amont+cœur signés", "Aval signés",
- *    "Facturable année N") pour l'onglet "Sessions à cheval 2026 - Auto". Ce flag ne
- *    FILTRE rien : il ne change que la PRÉSENTATION (en-têtes + lignes). Il est
- *    INDÉPENDANT de `debutYear` → l'onglet 25/26 figé (`debutYear=2025` sans le flag)
- *    reçoit exactement les mêmes 28 colonnes qu'avant S18.
+ * Mode CHEVAL (S18, optionnel, défaut = inactif → rétrocompatible) :
+ *  - `?debutYearFrom=AAAA` → PLANCHER de millésime, pour un onglet cheval CUMULÉ :
+ *    toute session à cheval (`année(dateFin) === année(dateDebut) + 1`, quel que soit
+ *    le millésime) dont `année(dateDebut) >= AAAA`. `debutYearFrom=2026` prend donc
+ *    26/27 aujourd'hui, PUIS 27/28 l'an prochain SANS retoucher l'onglet, tout en
+ *    excluant 24/25 et 25/26. À ne pas confondre avec `debutYear` (UN millésime exact,
+ *    utilisé par l'onglet 25/26 FIGÉ). N'a d'effet qu'avec `blocsCheval`.
+ *  - `?blocsCheval=1` → onglet "Sessions à cheval - Auto". DEUX effets :
+ *    (a) ajoute 3 colonnes EN FIN ("Amont+cœur signés", "Aval signés", "Facturable
+ *        année N") ;
+ *    (b) CHANGE LE PÉRIMÈTRE : la borne haute `dateFin <= aujourd'hui` ci-dessus ne
+ *        s'applique PLUS ; une session apparaît SSI elle est à cheval (tous millésimes),
+ *        au-dessus du plancher `debutYearFrom` s'il est fourni, ET `facturableAnneeN
+ *        === true`.
+ *        Raison : sur une session à cheval, l'aval finit l'année SUIVANTE, donc
+ *        `dateFin` est structurellement dans le futur et « terminée » exclurait tout
+ *        l'onglet. Le critère utile est « la partie année N (amont+cœur) est finie ».
+ *        REMPLACEMENT STRICT : une session terminée dont le miroir n'a pas
+ *        `facturableAnneeN === true` (doc pas resynchronisé depuis S18) n'apparaît pas.
+ *    Ces DEUX effets sont conditionnés au SEUL flag `blocsCheval` et sont INDÉPENDANTS
+ *    de `debutYear` → l'onglet 25/26 figé (`debutYear=2025` SANS le flag) garde
+ *    exactement le périmètre et les 28 colonnes d'avant S18.
  * Dates sur `dateFin`, jour Paris naïf `slice(0,10)`, jamais d'UTC.
  * Lignes triées par `dateFin` CROISSANTE (plus anciennes d'abord ; égalité →
  * `numeroComplet` pour un ordre déterministe).
@@ -106,10 +122,24 @@ interface Filters {
   avecCompteProduit: boolean; // numeroCompteProduit non vide (S11.2)
   debutYear: string | null; // année(dateDebut) === debutYear ET année(dateFin) === +1 (S16.1)
   /**
-   * S18 — `?blocsCheval=1` : ajoute 3 colonnes EN FIN (Amont+cœur signés / Aval signés /
-   * Facturable année N) pour l'onglet "Sessions à cheval 2026 - Auto".
+   * S18 — PLANCHER de millésime pour l'onglet cheval CUMULÉ : garde toute session à
+   * cheval dont `année(dateDebut) >= debutYearFrom`. Contrairement à `debutYear` (UN
+   * millésime exact), il cumule 26/27, puis 27/28 l'an prochain, etc. — l'onglet n'a
+   * pas à être recréé chaque année. Le plancher exclut les vieux (24/25, 25/26).
+   * N'a d'effet QUE combiné à `blocsCheval` ; absent des appels existants → inerte.
+   */
+  debutYearFrom: string | null;
+  /**
+   * S18 — `?blocsCheval=1`, onglet "Sessions à cheval 2026 - Auto". Ce flag fait DEUX
+   * choses (ce n'est PAS un simple format d'affichage) :
+   *  1. PRÉSENTATION : ajoute 3 colonnes EN FIN (Amont+cœur signés / Aval signés /
+   *     Facturable année N) ;
+   *  2. PÉRIMÈTRE : remplace la borne haute « session terminée » (`dateFin <=
+   *     aujourd'hui`) par `facturableAnneeN === true` — « la partie année N est finie ».
+   *     Remplacement STRICT (pas un OU) : cf. le bloc de `buildPayload`.
    * INDÉPENDANT de `debutYear` : l'onglet 25/26 FIGÉ (`debutYear=2025` SANS ce flag)
-   * continue de recevoir EXACTEMENT les mêmes en-têtes et les mêmes lignes qu'avant.
+   * continue de recevoir EXACTEMENT les mêmes en-têtes, le même périmètre et les mêmes
+   * lignes qu'avant S18 — les deux effets ci-dessus sont conditionnés à ce seul flag.
    */
   blocsCheval: boolean;
 }
@@ -119,17 +149,34 @@ function isModeCheval(f: Filters): boolean {
   return f.debutYear !== null;
 }
 
+/** Année d'une date ISO NAÏVE ("AAAA-…"), jamais en UTC. Non lisible → null. */
+function anneeDe(iso: string): number | null {
+  const y = String(iso ?? '').slice(0, 4);
+  return YEAR_RE.test(y) ? Number(y) : null;
+}
+
 /**
- * S16.1 — Chevauchement STRICT d'une année vers la SUIVANTE : `dateDebut` dans l'année
- * `debutYear` ET `dateFin` dans `debutYear + 1`. À lui seul, ce critère IMPLIQUE « à
- * cheval », et il est strictement plus précis qu'un simple `aCheval === true` (qui
- * accepterait n'importe quel chevauchement — 2024→2025 comme 2025→2026).
- * Années lues sur le jour Paris naïf (`slice(0,4)`), JAMAIS en UTC, comme le reste.
+ * S18 — À cheval sur DEUX années consécutives, QUEL QUE SOIT le millésime :
+ * `année(dateFin) === année(dateDebut) + 1`. Sans paramètre d'année, donc utilisable
+ * pour un onglet qui cumule les millésimes (26/27, puis 27/28…) sans être retouché
+ * chaque année. Écart de 2 ans ou plus → false (ce n'est pas un chevauchement d'année
+ * budgétaire). Date illisible → false (jamais d'inclusion par accident).
+ */
+function estCheval(s: SessionDoc): boolean {
+  const debut = anneeDe(s.dateDebut);
+  const fin = anneeDe(s.dateFin);
+  return debut !== null && fin !== null && fin === debut + 1;
+}
+
+/**
+ * S16.1 — Chevauchement STRICT d'UN millésime : à cheval ET `dateDebut` dans l'année
+ * `debutYear` (donc `dateFin` dans `debutYear + 1`). Plus précis qu'un simple
+ * `aCheval === true` (qui accepterait 2024→2025 comme 2025→2026).
  * debutYear=2025 → garde 2025→2026 ; exclut 2024→2025 ET 2025→2025 (même année).
+ * Sert l'onglet 25/26 FIGÉ ; l'onglet cheval cumulé utilise `debutYearFrom` (S18).
  */
 function estChevalVersAnneeSuivante(s: SessionDoc, debutYear: string): boolean {
-  const finYear = String(Number(debutYear) + 1);
-  return s.dateDebut.slice(0, 4) === debutYear && s.dateFin.slice(0, 4) === finYear;
+  return estCheval(s) && s.dateDebut.slice(0, 4) === debutYear;
 }
 
 function isFresh(entry: { at: number } | undefined, now: number): boolean {
@@ -204,7 +251,33 @@ async function buildPayload(filters: Filters, today: string, now: number): Promi
     .filter((s) => {
       if (isEchecEtape(s.etape)) return false; // hors "Échec" — même règle que isCockpitVisible
       const fin = s.dateFin.slice(0, 10);
-      if (fin > today) return false; // borne haute = aujourd'hui Paris (TOUJOURS)
+      // ┌── S18 — CRITÈRE D'APPARITION : deux régimes EXCLUSIFS ────────────────┐
+      // │ SANS blocsCheval (défaut, cockpit / janvier / onglet 25/26 FIGÉ) :    │
+      // │   borne haute `dateFin <= aujourd'hui Paris` → « session TERMINÉE ».  │
+      // │   Choix métier ACTÉ (ne pas noyer les commerciaux sous du futur).     │
+      // │ AVEC blocsCheval (onglet "Sessions à cheval 2026") :                  │
+      // │   « terminée » est le MAUVAIS critère — l'aval d'une session à cheval │
+      // │   finit l'année suivante, donc dateFin est structurellement future.   │
+      // │   Le bon critère est « la partie ANNÉE N (amont+cœur) est finie » =   │
+      // │   `facturableAnneeN` (miroir, dérivé des date_fin des modules != 21). │
+      // │ REMPLACEMENT STRICT, pas un OU : une session à cheval TERMINÉE mais   │
+      // │ dont le doc n'a pas `facturableAnneeN === true` (miroir pas encore    │
+      // │ resynchronisé depuis S18) n'apparaît PAS. Assumé : mieux vaut une     │
+      // │ ligne absente qu'une ligne dont on ne sait pas si N est facturable.   │
+      // └───────────────────────────────────────────────────────────────────────┘
+      if (filters.blocsCheval) {
+        // (a) à cheval sur 2 années consécutives — TOUS millésimes (26/27, 27/28, …)
+        if (!estCheval(s)) return false;
+        // (b) PLANCHER de millésime : exclut les vieux chevauchements (24/25, 25/26)
+        if (filters.debutYearFrom) {
+          const debut = anneeDe(s.dateDebut);
+          if (debut === null || debut < Number(filters.debutYearFrom)) return false;
+        }
+        // (c) la partie ANNÉE N (amont+cœur) est finie
+        if (s.facturableAnneeN !== true) return false; // pas finie, ou inconnue (miroir pas à jour)
+      } else if (fin > today) {
+        return false; // borne haute = aujourd'hui Paris (comportement d'origine, INCHANGÉ)
+      }
       if (filters.finFrom && fin < filters.finFrom) return false; // borne basse dateFin
       if (filters.debutYear && !estChevalVersAnneeSuivante(s, filters.debutYear)) return false; // année X → X+1 (S16.1)
       // S16.1 : `debutFrom` est NEUTRALISÉ en mode cheval — une session à cheval commence
@@ -263,8 +336,12 @@ export async function GET(req: Request): Promise<Response> {
   if (debutYear !== null && !YEAR_RE.test(debutYear)) {
     return json({ error: 'invalid debutYear (attendu AAAA)' }, 400); // ne lit pas Firestore
   }
+  const debutYearFrom = params.get('debutYearFrom'); // S18 — plancher de millésime (onglet cheval cumulé)
+  if (debutYearFrom !== null && !YEAR_RE.test(debutYearFrom)) {
+    return json({ error: 'invalid debutYearFrom (attendu AAAA)' }, 400); // ne lit pas Firestore
+  }
   const blocsCheval = params.get('blocsCheval') === '1'; // S18 (même convention que andpcOnly)
-  const filters: Filters = { finFrom, debutFrom, andpcOnly, avecCompteProduit, debutYear, blocsCheval };
+  const filters: Filters = { finFrom, debutFrom, andpcOnly, avecCompteProduit, debutYear, debutYearFrom, blocsCheval };
 
   try {
     const today = todayInParis(); // recalculé chaque requête → jamais codé en dur
@@ -273,7 +350,7 @@ export async function GET(req: Request): Promise<Response> {
     // S18 : `blocsCheval` DOIT entrer dans la clé — il change la FORME de la payload
     // (28 vs 31 colonnes). Sans lui, un appel flaggé pourrait recevoir le payload caché
     // d'un appel non flaggé (et inversement) → colonnes manquantes dans le Sheet.
-    const key = `${finFrom ?? 'all'}|${debutFrom ?? 'all'}|${andpcOnly ? '1' : '0'}|${avecCompteProduit ? '1' : '0'}|${debutYear ?? 'all'}|${blocsCheval ? '1' : '0'}|${today}`;
+    const key = `${finFrom ?? 'all'}|${debutFrom ?? 'all'}|${andpcOnly ? '1' : '0'}|${avecCompteProduit ? '1' : '0'}|${debutYear ?? 'all'}|${debutYearFrom ?? 'all'}|${blocsCheval ? '1' : '0'}|${today}`;
     const now = Date.now();
     const hit = cache.get(key);
     if (!isFresh(hit, now)) {
