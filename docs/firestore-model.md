@@ -147,3 +147,53 @@ Déclarés dans `firestore.indexes.json` :
 - Un helper Paris partagé (`parisDayOfInstant`) sert le drawer et la vue « À relancer ».
 
 ⚠️ Ne pas confondre les deux : slice pour le cas A (naïf Paris), conversion Intl pour le cas B (UTC-Z).
+
+## 7. Onglet à cheval : entrée et sortie
+
+> Cette section fige une règle métier. **L'ENTRÉE est active depuis S18. La SORTIE est un CADRE :
+> elle n'est PAS implémentée, aucun code ne l'applique aujourd'hui.**
+
+### 7.1 ENTRÉE — **ACTIF depuis S18**
+
+Une session apparaît dans l'onglet à cheval (`GET /api/export/sheet?...&blocsCheval=1`) **si et seulement si** :
+
+```
+estCheval(s)                                  // année(dateFin) === année(dateDebut) + 1, TOUS millésimes
+ET année(dateDebut) >= debutYearFrom          // plancher de millésime (paramètre ?debutYearFrom=AAAA)
+ET facturableAnneeN === true                  // modules amont+cœur terminés = partie année N facturable
+```
+
+C'est-à-dire : **la partie année N est facturable** (les modules non-aval sont terminés), même si
+`dateFin` — portée par l'aval — est encore dans le futur. En mode `blocsCheval`, ce trio **remplace**
+la borne haute « session terminée » (`dateFin <= aujourd'hui`) du cockpit. Les autres filtres
+(`isEchecEtape`, `andpcOnly`, `avecCompteProduit`, `finFrom`) continuent de s'appliquer.
+
+Implémentation : `web/src/app/api/export/sheet/route.ts` (`estCheval`, `buildPayload`).
+
+### 7.2 SORTIE — **CADRE, PAS ENCORE IMPLÉMENTÉ**
+
+À terme, une session devra **DISPARAÎTRE** de l'onglet une fois **entièrement bouclée**, pour éviter
+que les millésimes s'accumulent année après année (26/27, puis 27/28, puis 28/29…).
+
+**Critère retenu : la Facture 2 est payée**, c'est-à-dire `facture2DatePaiement` renseignée (non
+`null`, non vide).
+
+Filtre cible futur, à ajouter à la condition d'entrée :
+
+```
+facturableAnneeN === true  &&  !facture2DatePaiement
+```
+
+**Pourquoi ce critère.** `facture2DatePaiement` = paiement du **solde de l'année N+1** (la part portée
+par l'aval, cf. §1 `facture1*` / `facture2*` — S15). Une fois ce solde réglé, la session n'a plus rien
+à suivre côté facturation : elle n'a plus sa place dans un onglet de pilotage.
+
+**Précaution — prouvée sur la recon 3328.** Les dates de facture peuvent être **VIDES dans Dendreo
+alors même que la facture existe**. On se base donc sur `facture2DatePaiement` (**le paiement**), et
+**jamais** sur une date d'envoi. Et si Dendreo n'a pas saisi la date, la session **RESTE VISIBLE** :
+c'est le comportement sûr — mieux vaut **garder une session de trop** que la faire disparaître à tort
+d'un onglet de suivi.
+
+**Pourquoi pas maintenant.** Aucune session 26/27 n'aura sa Facture 2 payée avant 2027 (l'aval finit
+en 2027, la F2 vient après). La dette ne mord donc pas avant **2 à 3 millésimes accumulés**.
+À implémenter quand l'onglet commencera à mélanger plusieurs millésimes **bouclés**.
