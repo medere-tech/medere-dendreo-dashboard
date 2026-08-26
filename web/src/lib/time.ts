@@ -6,15 +6,13 @@
 
 const PARIS = 'Europe/Paris';
 
-/** Date du jour à Paris, "YYYY-MM-DD" (en-CA = format ISO). Injectable pour tests. */
-export function todayInParis(now: Date = new Date()): string {
-  return new Intl.DateTimeFormat('en-CA', {
-    timeZone: PARIS,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).format(now);
-}
+/**
+ * `todayInParis` vit désormais dans `src/core/paris-day.ts` (module neutre) : le sync
+ * serveur en a besoin et `src/` ne peut pas importer `web/`. Re-exporté ici pour que
+ * tous les appelants web gardent `@/lib/time` — UNE seule implémentation, aucun risque
+ * de dérive entre les deux paquets.
+ */
+export { todayInParis } from '@shared/core/paris-day';
 
 /**
  * Millisecondes jusqu'au prochain minuit Paris (pour re-évaluer « aujourd'hui »
