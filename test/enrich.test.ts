@@ -252,15 +252,26 @@ describe('computeFacturableAnneeN (S18)', () => {
     expect(computeFacturableAnneeN(lamsDateSurModule, TODAY)).toBe(true);
   });
 
-  it('LAM SANS objet module : compté en année N (pas ignoré, contrairement à toModuleViews)', () => {
-    // Sa date est future → doit faire tomber le flag. S'il était ignoré, on aurait true.
-    expect(computeFacturableAnneeN([lam('1', '13', '2025-01-01'), { id_lam: '2', date_fin: '2027-05-01' }], TODAY)).toBe(false);
-    // Et s'il est passé, il ne bloque rien.
+  it('LAM SANS objet module (donc sans catégorie) : IGNORÉ, il ne bloque pas', () => {
+    // Sa date est FUTURE et il ne fait pas tomber le flag : le cœur (13) est fini, ça suffit.
+    expect(computeFacturableAnneeN([lam('1', '13', '2025-01-01'), { id_lam: '2', date_fin: '2027-05-01' }], TODAY)).toBe(true);
+    // Passé : il ne change rien non plus.
     expect(computeFacturableAnneeN([lam('1', '13', '2025-01-01'), { id_lam: '2', date_fin: '2025-05-01' }], TODAY)).toBe(true);
   });
 
-  it('catégorie absente/illisible → traitée comme année N (sens prudent)', () => {
+  it('catégorie RÉSOLUE mais VIDE → ignorée ; seule, elle n\'identifie aucune partie N → false', () => {
     expect(computeFacturableAnneeN([{ id_lam: '1', module: { id_categorie_module: '' }, date_fin: '2027-01-01' }], TODAY)).toBe(false);
+    // Même passée : un module sans catégorie ne FONDE pas la facturation.
+    expect(computeFacturableAnneeN([{ id_lam: '1', module: { id_categorie_module: '' }, date_fin: '2020-01-01' }], TODAY)).toBe(false);
+  });
+
+  it('catégorie vide sur le MODULE : pas de repli vers le LAM (la valeur résolue fait autorité)', () => {
+    // Le module dit "" (= pas de catégorie) alors que le LAM porte "13". Le module fait foi
+    // → module IGNORÉ → aucune partie N identifiée → false. Sans cette règle, le repli
+    // lirait "13", classerait le module en partie N et sa date future bloquerait tout.
+    const lamAvecCatVideSurModule = { id_lam: '1', id_categorie_module: '13', module: { id_categorie_module: '' }, date_fin: '2027-05-01' };
+    expect(computeFacturableAnneeN([lamAvecCatVideSurModule], TODAY)).toBe(false);
+    // Le repli LAM fonctionne toujours quand le module N'A PAS la clé (cf. test dédié plus haut).
   });
 
   it('la catégorie 21 est la SEULE borne : 3, 13, 15, 22… comptent tous en année N', () => {
@@ -277,5 +288,62 @@ describe('computeFacturableAnneeN (S18)', () => {
     for (const mauvais of ['', 'aujourd\'hui', '2026-8-25', '2026-08-25T10:00:00']) {
       expect(computeFacturableAnneeN([lam('1', '13', '2020-01-01')], mauvais)).toBe(false);
     }
+  });
+
+  // --- Correctif 3474 : les modules SANS catégorie ne bloquent plus -----------
+  describe('modules sans catégorie (correctif 3474)', () => {
+    /** Module de support annexe : présent dans lams.php, mais AUCUNE catégorie. */
+    const sansCategorie = (idLam: string, dateFin: string) => ({
+      id_lam: idLam,
+      date_fin: dateFin,
+      module: { id_module: `m${idLam}`, id_categorie_module: '', intitule: 'telechargements' },
+    });
+
+    it('1. cas 3474 RÉEL : amont + 2 cœur finis + "telechargements" (sans cat., fin FUTURE) + aval futur → true', () => {
+      const lams3474 = [
+        lam('a', '22', '2026-07-15 23:59:59'), // EPP amont — fini
+        lam('b', '15', '2026-07-15 23:59:59'), // cœur (cat 15) — fini
+        lam('c', '15', '2026-08-01 23:59:59'), // 2e cœur — fini
+        sansCategorie('d', '2026-12-31 23:59:59'), // support annexe, fin future → NE BLOQUE PLUS
+        lam('e', '21', '2027-01-15 23:59:59'), // EPP aval — hors année N
+      ];
+      expect(computeFacturableAnneeN(lams3474, TODAY)).toBe(true);
+    });
+
+    it('2. le même module sans catégorie mais fin PASSÉE → true aussi (cohérent : il est ignoré)', () => {
+      const lams = [
+        lam('a', '22', '2026-07-15 23:59:59'),
+        lam('b', '15', '2026-07-15 23:59:59'),
+        sansCategorie('d', '2025-01-01 23:59:59'), // passé
+        lam('e', '21', '2027-01-15 23:59:59'),
+      ];
+      expect(computeFacturableAnneeN(lams, TODAY)).toBe(true);
+    });
+
+    it('3. UNIQUEMENT des modules sans catégorie (aucun amont/cœur) → false', () => {
+      expect(computeFacturableAnneeN([sansCategorie('d', '2025-01-01')], TODAY)).toBe(false);
+      expect(computeFacturableAnneeN([sansCategorie('d', '2025-01-01'), sansCategorie('e', '2025-02-01')], TODAY)).toBe(false);
+      // ...même accompagnés d'un aval : toujours aucune partie N identifiée.
+      expect(computeFacturableAnneeN([sansCategorie('d', '2025-01-01'), lam('e', '21', '2027-01-15')], TODAY)).toBe(false);
+    });
+
+    it('4. un VRAI cœur non fini bloque TOUJOURS, même en présence d\'un module sans catégorie', () => {
+      const lams = [
+        lam('a', '22', '2026-07-15 23:59:59'), // amont fini
+        lam('b', '15', '2026-12-01 23:59:59'), // cœur PAS fini → bloque
+        sansCategorie('d', '2026-12-31 23:59:59'),
+        lam('e', '21', '2027-01-15 23:59:59'),
+      ];
+      expect(computeFacturableAnneeN(lams, TODAY)).toBe(false);
+    });
+
+    it('5. NON-RÉGRESSION 3818-like : amont + cœur finis, AUCUN module sans catégorie → true', () => {
+      const lams = [
+        lam('a', '22', '2026-07-08 23:59:59'),
+        lam('b', '15', '2026-07-08 23:59:59'),
+        lam('c', '21', '2027-01-15 23:59:59'),
+      ];
+      expect(computeFacturableAnneeN(lams, TODAY)).toBe(true);
+    });
   });
 });
