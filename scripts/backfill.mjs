@@ -15,9 +15,31 @@
 //   arrêt propre sur quota Firestore (RESOURCE_EXHAUSTED), logs SANS PII.
 // - S17.4 : --purge active la PURGE DES FANTÔMES (mêmes critère et garde-fous que
 //   scripts/purge-fantomes.mjs, via la fonction partagée purgeGhostSignatures).
-//   OPT-IN : sans le flag, comportement strictement inchangé. Seul le cron NOCTURNE
-//   le passe (cf. .github/workflows/backfill-nightly.yml). Zéro appel Dendreo ajouté.
+//   OPT-IN : sans le flag, comportement strictement inchangé. Les DEUX crons le
+//   passent (nocturne les jours normaux, mensuel le 1er — le nocturne est sauté ce
+//   jour-là) → purge quotidienne sans trou. Zéro appel Dendreo ajouté.
 //   Ses logs sont SANS PII comme le reste du backfill (clé + doctype + status).
+//
+// - EXCLUSION (économie d'appels Dendreo) : une session « payée » ou « ancienne »
+//   (cf. src/reco/exclusion.ts) est SKIPPÉE avant processSession → ses 5 appels
+//   Dendreo (fichiers, lams, financements, factures, laps) ne partent JAMAIS.
+//   Le motif « payée » se lit dans le MIROIR, préchargé une fois par run
+//   (loadMiroirFactures : 1 lecture de collection, 0 appel Dendreo) : les champs
+//   de facturation n'existent pas avant l'appel à factures.php. Le motif
+//   « ancienne » est gratuit (aCheval + dateDebut sont déjà dans mapSession).
+//   Actif sur les DEUX crons. `--no-skip` restaure le comportement d'avant.
+//
+//   ⚠ ANGLE MORT ASSUMÉ (exclusion × purge) : une session SKIPPÉE n'est ni
+//   resynchronisée ni purgée de ses fantômes — la purge vit dans processSession,
+//   qui n'est pas appelé. Une ligne pending disparue de Dendreo sur une session
+//   payée/ancienne restera au miroir, et une signature tardive n'y entrera jamais.
+//   Rattrapage ponctuel : scripts/purge-fantomes.mjs, ou
+//   scripts/resync-session.mjs --idAdfs=… (aucun des deux ne passe par l'exclusion).
+//   Détail et critères : docs/signature-rule.md §6.
+//
+//   ⚠ MIROIR VIDE : la règle « ancienne » ne dépend PAS du miroir. Reconstruire un
+//   miroir vide (après clear-mirror.mjs) sur une année <= ANNEE_ANCIENNE_MAX
+//   skipperait tout → utiliser --no-skip pour ce cas.
 
 import { loadDendreoEnv, DENDREO } from '../src/config';
 import { DendreoClient } from '../src/dendreo/client';
@@ -26,19 +48,27 @@ import { computeFacturableAnneeN, deriveEligibleDpc, deriveNumeroCompteProduit, 
 import { todayInParis } from '../src/core/paris-day';
 import { enrichFinancement, ensureAndpcValidated, loadCommerciauxReferentiel } from '../src/dendreo/financement';
 import { purgeGhostSignatures } from '../src/dendreo/sync';
+import { estSessionExclue } from '../src/reco/exclusion';
 import { classifyAttestationBloc } from '../src/core/attestation-name';
 import { getDb } from '../src/firebase/admin';
 import { recalcSessionCounts, upsertSession, upsertSignature } from '../src/firebase/firestore';
 
 const FLOOR_YEAR = 2015;
 const CONCURRENCY = 5;
+/** Endpoints Dendreo lus par processSession pour UNE session — sert au chiffrage
+ *  des appels évités dans les logs : fichiers.php (signatures) + lams.php (modules)
+ *  + financements.php + factures.php + laps.php (enrichFinancement). */
+const APPELS_PAR_SESSION = 5;
 
 // --- args -------------------------------------------------------------------
 function parseArgs(argv) {
-  const a = { dryRun: false, force: false, year: null, limit: null, purge: false };
+  const a = { dryRun: false, force: false, year: null, limit: null, purge: false, noSkip: false };
   for (let i = 0; i < argv.length; i++) {
     const t = argv[i];
     if (t === '--dry-run') a.dryRun = true;
+    // Échappement : traite TOUTES les sessions, exclusion désactivée. Indispensable
+    // pour reconstruire un miroir vide (la règle "ancienne" ne lit pas le miroir).
+    else if (t === '--no-skip') a.noSkip = true;
     else if (t === '--purge') a.purge = true; // S17.4 : opt-in, jamais par défaut
     else if (t === '--force') a.force = true;
     else if (t === '--year') a.year = Number(argv[++i]);
@@ -99,6 +129,12 @@ async function pool(items, size, fn) {
 let quotaHit = false;
 let etapesMap = new Map();
 let commerciauxRef = new Map(); // S13.1 : référentiel commerciaux, chargé 1× au démarrage (comme ANDPC)
+// Exclusion : idAdf → { factureMontantHt, factureDatePaiement, facture2DatePaiement }
+// du miroir, préchargé 1× au démarrage (cf. loadMiroirFactures). Vide si --no-skip
+// ou si le miroir est illisible → aucune exclusion par « payée » (dégradation sûre).
+let miroirFactures = new Map();
+// Cumul multi-années des sessions écartées, pour le rapport final.
+const skipsTotaux = { payee: 0, ancienne: 0, listees: 0 };
 // Dédup inter-années : une session à cheval (start année N, end année N+1) est
 // listée par 2 années → on ne la traite qu'UNE fois, rattachée à sa 1re année
 // rencontrée (ordre croissant). Upsert idempotent par idAdf de toute façon.
@@ -287,6 +323,36 @@ async function writeMeta(patch) {
   await getDb().doc(META_PATH).set({ ...patch, lastRunAt: new Date().toISOString() }, { merge: true });
 }
 
+// --- miroir : préchargement pour l'exclusion --------------------------------
+/**
+ * UNE seule lecture de la collection `sessions` par run (pas N lectures unitaires),
+ * restreinte aux 3 champs de facturation via .select() : Firestore facture toujours
+ * au document, mais le payload réseau reste minimal. ZÉRO appel Dendreo.
+ * Clé de la Map = doc.id = idAdf (cf. sessionKey()).
+ * Miroir illisible → Map VIDE → exclusion « payée » désactivée pour ce run : on
+ * resynchronise tout. Jamais l'inverse — on ne saute pas une session par accident.
+ */
+async function loadMiroirFactures() {
+  try {
+    const snap = await getDb().collection('sessions')
+      .select('factureMontantHt', 'factureDatePaiement', 'facture2DatePaiement')
+      .get();
+    const m = new Map();
+    for (const d of snap.docs) {
+      const v = d.data() ?? {};
+      m.set(d.id, {
+        factureMontantHt: v.factureMontantHt ?? null,
+        factureDatePaiement: v.factureDatePaiement ?? null,
+        facture2DatePaiement: v.facture2DatePaiement ?? null,
+      });
+    }
+    return m;
+  } catch (err) {
+    log(`! miroir illisible → exclusion "payée" DÉSACTIVÉE pour ce run : ${shortReason(err)}`);
+    return new Map();
+  }
+}
+
 // --- traitement d'une session ----------------------------------------------
 async function processSession(session) {
   if (quotaHit) return { skipped: true };
@@ -349,13 +415,37 @@ async function processYear(year, budget) {
   // écartée par la limite lors d'une prochaine année.
   const candidates = sessions.map(mapSession).filter((s) => !processedIds.has(s.idAdf));
   const dupCrossYear = sessions.length - candidates.length;
+
+  // EXCLUSION — AVANT --limit et AVANT tout appel par session : chaque session
+  // écartée ici économise ses 5 appels Dendreo. Conséquence assumée sur --limit :
+  // `--limit N` compte N sessions RÉELLEMENT traitées, pas N sessions examinées.
+  // Les exclues entrent dans processedIds : une session à cheval est listée par
+  // les 2 années du run, on ne veut pas la compter deux fois dans les compteurs
+  // de skip (côté Dendreo c'est 0 appel dans les deux cas).
+  const skips = { payee: 0, ancienne: 0 };
   let mapped = candidates;
+  if (!args.noSkip) {
+    mapped = [];
+    for (const s of candidates) {
+      const motif = estSessionExclue(s, miroirFactures.get(s.idAdf));
+      if (motif) { skips[motif] += 1; processedIds.add(s.idAdf); continue; }
+      mapped.push(s);
+    }
+  }
+  skipsTotaux.listees += candidates.length;
+  skipsTotaux.payee += skips.payee;
+  skipsTotaux.ancienne += skips.ancienne;
+
   if (budget.limit != null) {
     const room = Math.max(0, budget.limit - budget.processed);
     if (mapped.length > room) mapped = mapped.slice(0, room);
   }
   for (const s of mapped) processedIds.add(s.idAdf);
-  log(`\n=== Année ${year} : ${mapped.length} session(s) à traiter (chevauchement ; ${dupCrossYear} déjà vue(s) année(s) précédente(s))${args.dryRun ? ' (dry-run)' : ''} ===`);
+  const nbSkips = skips.payee + skips.ancienne;
+  log(`\n=== Année ${year} : ${mapped.length} session(s) à traiter sur ${candidates.length} listée(s)`
+    + ` | SKIP payée:${skips.payee} ancienne:${skips.ancienne} → ~${nbSkips * APPELS_PAR_SESSION} appel(s) Dendreo évité(s)`
+    + `${args.noSkip ? ' (--no-skip : exclusion désactivée)' : ''}`
+    + ` (chevauchement ; ${dupCrossYear} déjà vue(s) année(s) précédente(s))${args.dryRun ? ' (dry-run)' : ''} ===`);
 
   const results = await pool(mapped, CONCURRENCY, processSession);
   budget.processed += mapped.length;
@@ -396,6 +486,20 @@ function printReport(perYear, meta, floorHasData) {
   log(`  à relancer (nonSignes) : ${tot.nonSignes}`);
   log(`  invariant signes+nonSignes==envoyes : ${tot.signes + tot.nonSignes === tot.envoyes ? 'OK ✅' : 'KO ❌'}`);
 
+  // ÉCONOMIE D'APPELS — le chiffre à surveiller en prod, run après run.
+  const nbSkips = skipsTotaux.payee + skipsTotaux.ancienne;
+  log(`\n  EXCLUSION (économie d'appels Dendreo) :`);
+  if (args.noSkip) {
+    log(`   - --no-skip : DÉSACTIVÉE, ${skipsTotaux.listees} session(s) listée(s) toutes traitées.`);
+  } else {
+    const part = skipsTotaux.listees ? ((nbSkips / skipsTotaux.listees) * 100).toFixed(1) : '0.0';
+    log(`   - sessions listées : ${skipsTotaux.listees}`);
+    log(`   - SKIP "payée" (facture soldée) : ${skipsTotaux.payee}`);
+    log(`   - SKIP "ancienne" (non à cheval, début <= plancher) : ${skipsTotaux.ancienne}`);
+    log(`   - total skippé : ${nbSkips} (${part} %) → ~${nbSkips * APPELS_PAR_SESSION} appel(s) Dendreo évité(s) ce run`);
+    log(`   - ⚠ ces sessions ne sont ni resynchronisées ni purgées (cf. en-tête du script).`);
+  }
+
   if (args.purge) {
     log(`\n  PURGE DES FANTÔMES (S17.4) :`);
     log(`   - fantômes pending SUPPRIMÉS : ${tot.purged}   (clé absente de Dendreo ET status pending)`);
@@ -418,11 +522,21 @@ function printReport(perYear, meta, floorHasData) {
 
 // --- main -------------------------------------------------------------------
 async function main() {
-  log(`# BACKFILL S2.2 — mode=${args.dryRun ? 'DRY-RUN' : 'WRITE'}${args.year ? ' year=' + args.year : ''}${args.limit != null ? ' limit=' + args.limit : ''}${args.force ? ' force' : ''}${args.purge ? ' PURGE-FANTÔMES' : ''}`);
+  log(`# BACKFILL S2.2 — mode=${args.dryRun ? 'DRY-RUN' : 'WRITE'}${args.year ? ' year=' + args.year : ''}${args.limit != null ? ' limit=' + args.limit : ''}${args.force ? ' force' : ''}${args.purge ? ' PURGE-FANTÔMES' : ''}${args.noSkip ? ' NO-SKIP' : ''}`);
   if (args.purge && args.dryRun) log('# ℹ --dry-run : la purge ne s\'exécute PAS (elle ne tourne que dans le chemin d\'écriture).');
   await ensureAndpcValidated(client); // S11.1 : valide le libellé "ANDPC" une fois (log d'alerte sinon)
   commerciauxRef = await loadCommerciauxReferentiel(client); // S13.1 : référentiel commerciaux (1 lecture, cache)
   etapesMap = await fetchEtapesMap();
+
+  // Exclusion : 1 lecture de la collection `sessions`, AVANT la boucle. Sans elle,
+  // les champs de facturation ne sont connus qu'APRÈS factures.php — donc trop tard
+  // pour économiser quoi que ce soit.
+  if (args.noSkip) {
+    log('# --no-skip : exclusion DÉSACTIVÉE, toutes les sessions listées seront traitées.');
+  } else {
+    miroirFactures = await loadMiroirFactures();
+    log(`# Exclusion active — miroir préchargé : ${miroirFactures.size} session(s) connue(s) (1 lecture Firestore, 0 appel Dendreo).`);
+  }
 
   const currentYear = new Date().getFullYear();
   let yearsToProcess = [];
