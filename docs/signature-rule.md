@@ -102,9 +102,30 @@ La purge **ne peut pas faire échouer un sync** : toute erreur (y compris une su
 
 **Où elle tourne.** Dans `syncSession` / `backfill`, **après** l'upsert des attestations renvoyées et **avant** `recalcSessionCounts` — les compteurs du cockpit sont donc calculés sur un miroir **déjà nettoyé**, en une seule passe. Elle réutilise la réponse `fichiers.php` déjà récupérée : **zéro appel Dendreo ajouté**.
 
-**Activation** : **cron nocturne uniquement** (`backfill --purge`). Pas le webhook (événement isolé, non supervisé), pas le cron mensuel. Cf. `docs/RUNBOOK.md` §3.2.
+**Activation** : les **deux crons** (`backfill --purge`) — le nocturne les jours normaux, le **mensuel le 1er** (jour où le nocturne est sauté pour ne pas faire double emploi). La purge tourne donc **une fois par jour, sans trou**. Pas le webhook (événement isolé, non supervisé). Cf. `docs/RUNBOOK.md` §3.2.
 
 Implémentation : `purgeGhostSignatures` (`src/dendreo/sync.ts`), partagée sync + backfill. Équivalent manuel et ciblé : `scripts/purge-fantomes.mjs` (dry-run par défaut).
+
+### 5 ter. Exclusion du backfill — l'angle mort assumé
+
+Pour tenir le quota d'appels Dendreo, le backfill **n'appelle plus les 5 endpoints** (`fichiers.php`, `lams.php`, `financements.php`, `factures.php`, `laps.php`) pour deux familles de sessions. Règles dans `src/reco/exclusion.ts` (pures, testées) :
+
+| Motif | Critère |
+|---|---|
+| **`payee`** | `factureMontantHt > 0` **ET** la date de paiement qui **solde** le dossier : `facture2DatePaiement` si la session est **à cheval**, `factureDatePaiement` sinon. La facture 1 payée d'une session à cheval **ne suffit pas**. |
+| **`ancienne`** | session **NON à cheval** dont `année(dateDebut) <= RECO_START_YEAR`. **Jamais** appliqué à une session à cheval : une 2025/2026 vit encore en 2026. |
+
+Le motif `payee` se lit dans le **miroir**, préchargé **une fois par run** (1 lecture de collection, 0 appel Dendreo) : les champs de facturation n'existent qu'**après** `factures.php`, donc trop tard pour économiser quoi que ce soit. Une session **absente du miroir** n'est jamais exclue par `payee`.
+
+**⚠ Ce que l'exclusion coûte — accepté en connaissance de cause :**
+
+- Une session skippée n'est **pas purgée** de ses fantômes (la purge vit dans `processSession`, qui n'est pas appelé).
+- Une **signature tardive** sur une session skippée (attestation aval signée après le paiement) **n'entrera jamais** au miroir : il se fige à la dernière synchro.
+- Rattrapage, tous deux hors exclusion : `scripts/purge-fantomes.mjs` et `scripts/resync-session.mjs --idAdfs=…`.
+
+**Désactivation** : `backfill --no-skip` traite tout. Obligatoire pour **reconstruire un miroir vide** (après `clear-mirror.mjs`) sur une année `<= RECO_START_YEAR` — la règle `ancienne` ne dépend pas du miroir et skipperait l'année entière.
+
+**Mesure** : `scripts/mesurer-exclusion-cron.mjs` (lecture seule) chiffre l'économie avant activation ; les logs `SKIP payée:/ancienne:` de chaque run la vérifient après.
 
 ## 6. Cible de réconciliation (preuve)
 

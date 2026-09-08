@@ -134,8 +134,9 @@ qui rattrape ce que le webhook ne voit pas (les envois, les sessions sans activi
     d'effacement en masse sur un hoquet de l'API.
   - **Où le lire :** dans le run GitHub Actions, section `PURGE DES FANTÔMES` du rapport final
     (supprimés / skips / signées absentes), et une ligne `[PURGE SUPPRIMÉ]` par suppression.
-  - **Le webhook et le cron mensuel ne purgent pas** — c'est volontaire : le webhook réagit à un
-    événement isolé, il n'a pas de vue d'ensemble pour conclure qu'un document a disparu.
+  - **Le webhook ne purge pas** — c'est volontaire : il réagit à un événement isolé, il n'a pas de
+    vue d'ensemble pour conclure qu'un document a disparu. **Les crons nocturne ET mensuel purgent**
+    (le mensuel prend le relais le 1er du mois, jour où le nocturne est sauté).
   - **Besoin de purger une session précise, tout de suite ?** voir la section 8 (opérations
     manuelles) : `scripts/purge-fantomes.mjs`, qui simule par défaut et n'efface qu'avec
     `--execute`.
@@ -156,8 +157,8 @@ jusqu'à l'année en cours** — une vérification plus large, ceinture et brete
 | Mécanisme | Quand | Ce qu'il couvre |
 |---|---|---|
 | **Webhook** | À chaque signature (temps réel) | Les signatures, instantanément |
-| **Cron nocturne** | Chaque nuit ~3 h | Année en cours + précédente (envois inclus) **+ purge des fantômes** |
-| **Cron mensuel** | 1ᵉʳ du mois ~4 h | 2025 → année en cours (vérification complète) |
+| **Cron nocturne** | Chaque nuit ~3 h (sauf le 1er du mois) | Année en cours + précédente (envois inclus) **+ purge des fantômes** |
+| **Cron mensuel** | 1ᵉʳ du mois ~4 h | 2025 → année en cours (vérification complète) **+ purge des fantômes** |
 
 **Conclusion : l'outil se tient à jour tout seul.** Un backfill manuel n'est nécessaire que dans
 des cas exceptionnels (voir [section 8](#8-opérations-manuelles)).
