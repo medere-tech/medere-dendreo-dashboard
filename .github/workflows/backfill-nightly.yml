@@ -15,7 +15,29 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # Le 1er du mois, le backfill MENSUEL réconcilie les mêmes années 1 h plus tard
+  # (02:00 UTC) et passe désormais --purge lui aussi : le nocturne ferait double
+  # emploi et paierait deux fois les appels Dendreo. On le saute ce jour-là.
+  # `date -u` : le cron GitHub est en UTC, on compare dans le même référentiel.
+  garde:
+    runs-on: ubuntu-latest
+    outputs:
+      skip: ${{ steps.jour.outputs.skip }}
+    steps:
+      - id: jour
+        run: |
+          if [ "$(date -u +%d)" = "01" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::1er du mois → nocturne sauté, le backfill mensuel (02:00 UTC) prend le relais (purge incluse)."
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
   backfill:
+    needs: garde
+    # Un déclenchement MANUEL force le passage : le 1er du mois, on doit pouvoir
+    # relancer le nocturne à la demande sans attendre le mois suivant.
+    if: needs.garde.outputs.skip != 'true' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
@@ -54,8 +76,11 @@ jobs:
             #     warning non bloquant, repris au prochain run
             #   - exit != 0 SANS quota → échec réel → on fait échouer le job
             # --purge (S17.4) : nettoyage continu des fantômes (lignes pending
-            # disparues de Dendreo). ACTIVÉ ICI SEULEMENT — pas dans le mensuel,
-            # pas dans le webhook. Critère et garde-fous : docs/signature-rule.md §6.
+            # disparues de Dendreo). Activé ici ET dans le mensuel (qui couvre le
+            # 1er, jour où ce job est sauté) → purge quotidienne sans trou. Pas
+            # dans le webhook. Critère et garde-fous : docs/signature-rule.md §6.
+            # ⚠ L'EXCLUSION (sessions payées/anciennes) skippe des sessions : elles
+            # ne sont ni resynchronisées ni purgées. Angle mort assumé, cf. §6.
             if npm run backfill -- --year "$Y" --force --purge 2>&1 | tee "/tmp/bf-$Y.log"; then
               echo "année $Y : OK"
             elif grep -qiE "RESOURCE_EXHAUSTED|Quota exceeded" "/tmp/bf-$Y.log"; then

@@ -44,8 +44,11 @@ jobs:
           YEARS="$(npx tsx scripts/reco-years.mjs monthly)"
           echo "Années à réconcilier (monthly) : $YEARS"
           for Y in $YEARS; do
-            echo "::group::backfill --year $Y --force"
-            if npm run backfill -- --year "$Y" --force 2>&1 | tee "/tmp/bf-$Y.log"; then
+            echo "::group::backfill --year $Y --force --purge"
+            # --purge : le nocturne est SAUTÉ le 1er du mois (il ferait double
+            # emploi avec ce job). Sans ce flag ici, la purge des fantômes aurait
+            # un trou d'un jour par mois. Critère : docs/signature-rule.md §6.
+            if npm run backfill -- --year "$Y" --force --purge 2>&1 | tee "/tmp/bf-$Y.log"; then
               echo "année $Y : OK"
             elif grep -qiE "RESOURCE_EXHAUSTED|Quota exceeded" "/tmp/bf-$Y.log"; then
               echo "::warning::année $Y : quota Firestore atteint → arrêt propre, repris au prochain run (non bloquant)"
