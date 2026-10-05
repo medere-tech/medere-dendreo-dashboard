@@ -187,6 +187,7 @@ function mapSession(s) {
     factureDateEnvoi: null,
     factureMontantHt: null,
     factureDatePaiement: null,
+    factureMontantDepose: null,
     // S15 : facture 1/2 (sessions à cheval) — défauts sûrs, écrasés par enrichFinancement.
     facture1DateEnvoi: null,
     facture1DatePaiement: null,

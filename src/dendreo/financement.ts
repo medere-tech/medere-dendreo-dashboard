@@ -95,29 +95,38 @@ export function sumMontantAndpc(lines: readonly FinancementLine[]): number | nul
  *                  PAYÉES OU NON. → visible dès le dépôt.
  *  - montantHt   : SOMME des montant_total_ht des factures ANDPC PAYÉES uniquement.
  *  - datePaiement: la PLUS RÉCENTE date_paiement des PAYÉES.
- * Aucune facture ANDPC → les 3 champs null. Factures déposées mais AUCUNE payée →
- * dateEnvoi remplie, montantHt et datePaiement null.
+ *  - montantDepose: SOMME des montant_total_ht des factures ANDPC DÉPOSÉES (date_envoi
+ *                  non vide), payées ou non. Symétrique de montantHt : seul le filtre de
+ *                  date change. Une facture payée SANS date_envoi (cas 3328) compte dans
+ *                  montantHt mais PAS ici → montantDepose < montantHt est possible (assumé).
+ * Aucune facture ANDPC → les 4 champs null. Factures déposées mais AUCUNE payée →
+ * dateEnvoi et montantDepose remplis, montantHt et datePaiement null.
  */
 export function aggregateFacturesAndpc(factures: readonly FactureLine[]): {
   montantHt: number | null;
   dateEnvoi: string | null;
   datePaiement: string | null;
+  montantDepose: number | null;
 } {
   // TOUTES les factures ANDPC (déposées, payées ou non) → base de la date de dépôt.
   const toutesAndpc = factures.filter((f) => f.idOpca === ANDPC_ID);
-  if (toutesAndpc.length === 0) return { montantHt: null, dateEnvoi: null, datePaiement: null };
+  if (toutesAndpc.length === 0) return { montantHt: null, dateEnvoi: null, datePaiement: null, montantDepose: null };
 
   // Sous-ensemble PAYÉ (date_paiement renseignée) → base du montant et de la date de paiement.
   const payees = toutesAndpc.filter((f) => f.datePaiement !== null && f.datePaiement !== '');
+  // Sous-ensemble DÉPOSÉ (date_envoi renseignée) → base du montant déposé.
+  const deposees = toutesAndpc.filter((f) => f.dateEnvoi !== null && f.dateEnvoi !== '');
 
   const envois = toutesAndpc.map((f) => f.dateEnvoi).filter((d): d is string => d !== null && d !== '');
   const hts = payees.map((f) => f.montantHt).filter((m): m is number => m !== null);
   const paiements = payees.map((f) => f.datePaiement).filter((d): d is string => d !== null && d !== '');
+  const htsDeposes = deposees.map((f) => f.montantHt).filter((m): m is number => m !== null);
 
   return {
     montantHt: hts.length ? round2(hts.reduce((a, m) => a + m, 0)) : null,
     dateEnvoi: envois.length ? envois.reduce((min, d) => (d < min ? d : min)) : null, // plus ancienne (ISO → lexicographique)
     datePaiement: paiements.length ? paiements.reduce((max, d) => (d > max ? d : max)) : null, // plus récente
+    montantDepose: htsDeposes.length ? round2(htsDeposes.reduce((a, m) => a + m, 0)) : null,
   };
 }
 
@@ -336,6 +345,7 @@ export interface FinancementEnrichment {
     factureDateEnvoi: string | null;
     factureMontantHt: number | null;
     factureDatePaiement: string | null;
+    factureMontantDepose: number | null; // Σ HT des factures ANDPC déposées (date_envoi), payées ou non
     // S15 — peuplés UNIQUEMENT si la session est à cheval (sinon null, cf. splitFacturesAcheval).
     facture1DateEnvoi: string | null;
     facture1DatePaiement: string | null;
@@ -377,6 +387,7 @@ export async function enrichFinancement(
       factureDateEnvoi: agg.dateEnvoi,
       factureMontantHt: agg.montantHt,
       factureDatePaiement: agg.datePaiement,
+      factureMontantDepose: agg.montantDepose,
       ...splitFacturesAcheval(factures, aCheval), // S15 — 0 lecture ajoutée
     },
     financeurByParticipant: buildFinanceurByParticipant(laps, lines),

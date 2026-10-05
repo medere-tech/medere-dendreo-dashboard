@@ -72,7 +72,7 @@ describe('aggregateFacturesAndpc — S13.3 : dépôt (TOUTES) vs paiement (PAYÉ
       fac(ANDPC_ID, 1111.5, '2026-07-03', '2026-07-20'), // FA-2026-0766 (payée)
       fac(ANDPC_ID, 4056.5, '2026-07-13', null),         // FA-2026-0794 (déposée, non payée)
     ]);
-    expect(r).toEqual({ montantHt: 1111.5, dateEnvoi: '2026-07-03', datePaiement: '2026-07-20' });
+    expect(r).toEqual({ montantHt: 1111.5, dateEnvoi: '2026-07-03', datePaiement: '2026-07-20', montantDepose: 5168 });
   });
 
   it('facture NON payée déposée AVANT la payée → dateEnvoi = celle de la NON payée', () => {
@@ -80,7 +80,7 @@ describe('aggregateFacturesAndpc — S13.3 : dépôt (TOUTES) vs paiement (PAYÉ
       fac(ANDPC_ID, 1111.5, '2026-07-13', '2026-07-20'), // payée, déposée le 13
       fac(ANDPC_ID, 4056.5, '2026-07-03', null),         // NON payée, déposée le 03 → gagne
     ]);
-    expect(r).toEqual({ montantHt: 1111.5, dateEnvoi: '2026-07-03', datePaiement: '2026-07-20' });
+    expect(r).toEqual({ montantHt: 1111.5, dateEnvoi: '2026-07-03', datePaiement: '2026-07-20', montantDepose: 5168 });
   });
 
   it('2 factures PAYÉES → somme des deux HT + paiement le plus récent + envoi le plus ancien', () => {
@@ -88,17 +88,17 @@ describe('aggregateFacturesAndpc — S13.3 : dépôt (TOUTES) vs paiement (PAYÉ
       fac(ANDPC_ID, 4056.5, '2026-06-12', '2026-06-25'),
       fac(ANDPC_ID, 1111.5, '2026-06-01', '2026-06-20'),
     ]);
-    expect(r).toEqual({ montantHt: 5168, dateEnvoi: '2026-06-01', datePaiement: '2026-06-25' });
+    expect(r).toEqual({ montantHt: 5168, dateEnvoi: '2026-06-01', datePaiement: '2026-06-25', montantDepose: 5168 });
   });
 
   it('1 facture PAYÉE seule → les 3 champs remplis', () => {
     const r = aggregateFacturesAndpc([fac(ANDPC_ID, 1111.5, '2026-07-03', '2026-07-20')]);
-    expect(r).toEqual({ montantHt: 1111.5, dateEnvoi: '2026-07-03', datePaiement: '2026-07-20' });
+    expect(r).toEqual({ montantHt: 1111.5, dateEnvoi: '2026-07-03', datePaiement: '2026-07-20', montantDepose: 1111.5 });
   });
 
   it('1 facture DÉPOSÉE non payée seule → dateEnvoi remplie, montantHt et datePaiement null', () => {
     const r = aggregateFacturesAndpc([fac(ANDPC_ID, 4056.5, '2026-07-13', null)]);
-    expect(r).toEqual({ montantHt: null, dateEnvoi: '2026-07-13', datePaiement: null });
+    expect(r).toEqual({ montantHt: null, dateEnvoi: '2026-07-13', datePaiement: null, montantDepose: 4056.5 });
   });
 
   it('plusieurs factures déposées, AUCUNE payée → dateEnvoi = la plus ancienne, montant/paiement null', () => {
@@ -106,7 +106,7 @@ describe('aggregateFacturesAndpc — S13.3 : dépôt (TOUTES) vs paiement (PAYÉ
       fac(ANDPC_ID, 1111.5, '2026-07-03', null),
       fac(ANDPC_ID, 4056.5, '2026-07-13', null),
     ]);
-    expect(r).toEqual({ montantHt: null, dateEnvoi: '2026-07-03', datePaiement: null });
+    expect(r).toEqual({ montantHt: null, dateEnvoi: '2026-07-03', datePaiement: null, montantDepose: 5168 });
   });
 
   it('date_envoi : une facture sans date_envoi + une avec → celle qui existe', () => {
@@ -119,13 +119,13 @@ describe('aggregateFacturesAndpc — S13.3 : dépôt (TOUTES) vs paiement (PAYÉ
 
   it('factures ANDPC existantes mais AUCUNE date_envoi → dateEnvoi null', () => {
     const r = aggregateFacturesAndpc([fac(ANDPC_ID, 4056.5, null, null)]);
-    expect(r).toEqual({ montantHt: null, dateEnvoi: null, datePaiement: null });
+    expect(r).toEqual({ montantHt: null, dateEnvoi: null, datePaiement: null, montantDepose: null });
   });
 
   it('0 facture ANDPC → les 3 champs null (liste vide ou seulement non-360)', () => {
-    expect(aggregateFacturesAndpc([])).toEqual({ montantHt: null, dateEnvoi: null, datePaiement: null });
+    expect(aggregateFacturesAndpc([])).toEqual({ montantHt: null, dateEnvoi: null, datePaiement: null, montantDepose: null });
     expect(aggregateFacturesAndpc([fac('449369', 300, '2026-01-01', '2026-01-10')]))
-      .toEqual({ montantHt: null, dateEnvoi: null, datePaiement: null });
+      .toEqual({ montantHt: null, dateEnvoi: null, datePaiement: null, montantDepose: null });
   });
 
   it('ne filtre RIEN d\'autre que id_opca=360 (avoirs non traités), y compris pour la date de dépôt', () => {
@@ -133,7 +133,50 @@ describe('aggregateFacturesAndpc — S13.3 : dépôt (TOUTES) vs paiement (PAYÉ
       fac(ANDPC_ID, 500, '2026-02-01', '2026-02-10'), // 360 payée → comptée
       fac('2669', 999, '2026-01-01', '2026-01-10'),   // autre financeur → exclu (même pour dateEnvoi)
     ]);
-    expect(r).toEqual({ montantHt: 500, dateEnvoi: '2026-02-01', datePaiement: '2026-02-10' });
+    expect(r).toEqual({ montantHt: 500, dateEnvoi: '2026-02-01', datePaiement: '2026-02-10', montantDepose: 500 });
+  });
+});
+
+describe('aggregateFacturesAndpc — montantDepose : déposées (date_envoi) vs payées', () => {
+  it('2 ANDPC déposées, une payée une non → déposé = somme des 2, payé = la payée seule (asymétrie voulue)', () => {
+    const r = aggregateFacturesAndpc([
+      fac(ANDPC_ID, 1111.5, '2026-07-03', '2026-07-20'), // déposée + payée
+      fac(ANDPC_ID, 4056.5, '2026-07-13', null),         // déposée, NON payée
+    ]);
+    expect(r.montantDepose).toBe(5168);
+    expect(r.montantHt).toBe(1111.5);
+  });
+
+  it('cas 3328 : ANDPC payée SANS date_envoi → hors déposé, dans payé (déposé < payé possible)', () => {
+    const r = aggregateFacturesAndpc([
+      fac(ANDPC_ID, 16837.2, null, '2025-12-22'),       // payée, jamais "déposée" au sens date_envoi
+      fac(ANDPC_ID, 4542.2, '2026-07-29', '2026-08-10'), // déposée + payée
+    ]);
+    expect(r.montantDepose).toBe(4542.2);
+    expect(r.montantHt).toBe(21379.4);
+    expect(r.montantDepose!).toBeLessThan(r.montantHt!);
+  });
+
+  it('aucune facture ANDPC → montantDepose null', () => {
+    expect(aggregateFacturesAndpc([]).montantDepose).toBeNull();
+    expect(aggregateFacturesAndpc([fac('449369', 300, '2026-01-01', null)]).montantDepose).toBeNull();
+  });
+
+  it('facture NON-ANDPC (id_opca ≠ 360) avec date_envoi → ignorée', () => {
+    const r = aggregateFacturesAndpc([
+      fac(ANDPC_ID, 500, '2026-02-01', null),
+      fac('2669', 999, '2026-01-01', null), // autre financeur, déposée → exclue
+    ]);
+    expect(r.montantDepose).toBe(500);
+  });
+
+  it('date_envoi vide ("") traitée comme absente ; montant null ignoré', () => {
+    const r = aggregateFacturesAndpc([
+      fac(ANDPC_ID, 700, '', null),             // "" → non déposée
+      fac(ANDPC_ID, null, '2026-03-01', null),  // déposée sans montant → ignorée dans la somme
+      fac(ANDPC_ID, 300, '2026-03-02', null),
+    ]);
+    expect(r.montantDepose).toBe(300);
   });
 });
 
@@ -255,7 +298,7 @@ describe('splitFacturesAcheval — S15', () => {
     ];
     splitFacturesAcheval(factures, true);
     expect(aggregateFacturesAndpc(factures)).toEqual({
-      montantHt: 1111.5, dateEnvoi: '2026-07-03', datePaiement: '2026-07-20',
+      montantHt: 1111.5, dateEnvoi: '2026-07-03', datePaiement: '2026-07-20', montantDepose: 5168,
     });
   });
 });
@@ -317,7 +360,7 @@ describe('enrichFinancement — résilience (échec d\'une lecture)', () => {
   it('tout OK, session NON à cheval → valeurs remplies, les 4 champs S15 null', async () => {
     const r = await enrichFinancement('A1', makeClient(new Set()), false);
     expect(r.session).toEqual({
-      financeurAndpc: true, montantAndpc: 500, factureDateEnvoi: '2026-05-11', factureMontantHt: 800, factureDatePaiement: '2026-05-20',
+      financeurAndpc: true, montantAndpc: 500, factureDateEnvoi: '2026-05-11', factureMontantHt: 800, factureDatePaiement: '2026-05-20', factureMontantDepose: 800,
       facture1DateEnvoi: null, facture1DatePaiement: null, facture2DateEnvoi: null, facture2DatePaiement: null,
     });
     expect(r.financeurByParticipant.get('p1')).toBe(true);
@@ -334,7 +377,7 @@ describe('enrichFinancement — résilience (échec d\'une lecture)', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const r = await enrichFinancement('A2', makeClient(new Set(['factures'])), true); // même à cheval
     expect(r.session).toEqual({
-      financeurAndpc: true, montantAndpc: 500, factureDateEnvoi: null, factureMontantHt: null, factureDatePaiement: null,
+      financeurAndpc: true, montantAndpc: 500, factureDateEnvoi: null, factureMontantHt: null, factureDatePaiement: null, factureMontantDepose: null,
       // S15 : lecture factures KO → les 4 champs null, la session n'est JAMAIS perdue.
       facture1DateEnvoi: null, facture1DatePaiement: null, facture2DateEnvoi: null, facture2DatePaiement: null,
     });

@@ -93,6 +93,7 @@ function validateSessionInput(s: SessionUpsertInput): void {
   assertNullableString(s.factureDateEnvoi, 'factureDateEnvoi');
   assertNullableNumber(s.factureMontantHt, 'factureMontantHt');
   assertNullableString(s.factureDatePaiement, 'factureDatePaiement');
+  assertNullableNumber(s.factureMontantDepose, 'factureMontantDepose');
   // S15 : facture 1/2 des sessions à cheval — champs "mous", jamais bloquants.
   assertNullableString(s.facture1DateEnvoi, 'facture1DateEnvoi');
   assertNullableString(s.facture1DatePaiement, 'facture1DatePaiement');

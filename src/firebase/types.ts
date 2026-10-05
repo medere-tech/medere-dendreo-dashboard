@@ -63,6 +63,7 @@ export interface SessionDoc {
   factureDateEnvoi: string | null; // plus ancienne date_envoi des factures id_opca=360 (jour Paris) ; null si aucune
   factureMontantHt: number | null; // Σ montant_total_ht des factures id_opca=360 ; null si aucune
   factureDatePaiement: string | null; // plus récente date_paiement des factures id_opca=360 (jour Paris) ; null si aucune/impayé
+  factureMontantDepose: number | null; // Σ montant_total_ht des factures id_opca=360 DÉPOSÉES (date_envoi non vide), payées ou non ; null si aucune
   // --- S15 : FACTURE 1 / FACTURE 2 des sessions À CHEVAL ----------------------
   // Factures ANDPC triées par date_emission croissante (départage id_facture) :
   // position 1 = budget de l'année de DÉBUT, position 2 = budget de l'année de FIN.

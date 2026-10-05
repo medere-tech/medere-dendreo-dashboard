@@ -49,6 +49,7 @@ const session = (idAdf: string): SessionUpsertInput => ({
   factureDateEnvoi: null,
   factureMontantHt: null,
   factureDatePaiement: null,
+  factureMontantDepose: null,
   facture1DateEnvoi: null,
   facture1DatePaiement: null,
   facture2DateEnvoi: null,
