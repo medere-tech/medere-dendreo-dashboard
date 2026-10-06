@@ -429,8 +429,11 @@ async function processYear(year, budget) {
   let mapped = candidates;
   if (!args.noSkip) {
     mapped = [];
+    // UN SEUL « aujourd'hui » pour toute l'année : la fenêtre « payée récemment » (règle A,
+    // FENETRE_PAIEMENT_RECENT_JOURS) se juge au même jour pour toutes les sessions.
+    const today = todayInParis();
     for (const s of candidates) {
-      const motif = estSessionExclue(s, miroirFactures.get(s.idAdf));
+      const motif = estSessionExclue(s, miroirFactures.get(s.idAdf), today);
       if (motif) { skips[motif] += 1; processedIds.add(s.idAdf); continue; }
       mapped.push(s);
     }
