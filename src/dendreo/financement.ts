@@ -37,6 +37,7 @@ export interface FactureLine {
   montantHt: number | null;
   datePaiement: string | null;
   dateEmission: string | null; // S15 : porte l'ORDRE des factures (cf. splitFacturesAcheval)
+  idParent: string | null; // sur un AVOIR : id_facture de la facture qu'il annule ; vide/"0" → null
 }
 
 /** Un lien inscription minimal (laps.php). */
@@ -95,10 +96,20 @@ export function sumMontantAndpc(lines: readonly FinancementLine[]): number | nul
  *                  PAYÉES OU NON. → visible dès le dépôt.
  *  - montantHt   : SOMME des montant_total_ht des factures ANDPC PAYÉES uniquement.
  *  - datePaiement: la PLUS RÉCENTE date_paiement des PAYÉES.
- *  - montantDepose: SOMME des montant_total_ht des factures ANDPC DÉPOSÉES (date_envoi
- *                  non vide), payées ou non. Symétrique de montantHt : seul le filtre de
- *                  date change. Une facture payée SANS date_envoi (cas 3328) compte dans
- *                  montantHt mais PAS ici → montantDepose < montantHt est possible (assumé).
+ *  - montantDepose: règle LIÉE {facture, avoir} :
+ *                  · « comptée positive » = facture ANDPC HT > 0 ET date_envoi non vide
+ *                    (dépôt tracé), payée ou non ;
+ *                  · AVOIR (HT < 0) soustrait SEULEMENT si sa parente (id_facture ===
+ *                    avoir.id_parent) est une comptée positive : il annule une facture retoquée
+ *                    qui sinon gonflerait le déposé (cas 3636 : 11552 → 5700). Parente NON
+ *                    comptée → avoir IGNORÉ, sinon il retrancherait un montant jamais ajouté
+ *                    (cas 2948 : −532 au lieu de 12502).
+ *                  · = Σ comptées positives + Σ avoirs retenus ; null si AUCUNE comptée positive.
+ *                  Recon 200 sessions : avoir ⇔ HT < 0 ; id_parent pointe TOUJOURS une facture
+ *                  de la même session, lien retour parente.id_avoir confirmé (17/17).
+ *                  Une facture positive SANS date_envoi reste EXCLUE (saisie non faite) : une
+ *                  facture payée sans date_envoi (cas 3328) compte dans montantHt mais PAS ici
+ *                  → montantDepose < montantHt est possible (assumé).
  * Aucune facture ANDPC → les 4 champs null. Factures déposées mais AUCUNE payée →
  * dateEnvoi et montantDepose remplis, montantHt et datePaiement null.
  */
@@ -114,19 +125,25 @@ export function aggregateFacturesAndpc(factures: readonly FactureLine[]): {
 
   // Sous-ensemble PAYÉ (date_paiement renseignée) → base du montant et de la date de paiement.
   const payees = toutesAndpc.filter((f) => f.datePaiement !== null && f.datePaiement !== '');
-  // Sous-ensemble DÉPOSÉ (date_envoi renseignée) → base du montant déposé.
-  const deposees = toutesAndpc.filter((f) => f.dateEnvoi !== null && f.dateEnvoi !== '');
+  // DÉPOSÉ (règle liée) : comptées positives, puis avoirs dont la PARENTE est comptée.
+  const compteesPositives = toutesAndpc.filter(
+    (f) => f.montantHt !== null && f.montantHt > 0 && f.dateEnvoi !== null && f.dateEnvoi !== '',
+  );
+  const idsComptees = new Set(compteesPositives.map((f) => f.idFacture));
+  const avoirsRetenus = toutesAndpc.filter(
+    (f) => f.montantHt !== null && f.montantHt < 0 && f.idParent !== null && idsComptees.has(f.idParent),
+  );
 
   const envois = toutesAndpc.map((f) => f.dateEnvoi).filter((d): d is string => d !== null && d !== '');
   const hts = payees.map((f) => f.montantHt).filter((m): m is number => m !== null);
   const paiements = payees.map((f) => f.datePaiement).filter((d): d is string => d !== null && d !== '');
-  const htsDeposes = deposees.map((f) => f.montantHt).filter((m): m is number => m !== null);
+  const htsDeposes = [...compteesPositives, ...avoirsRetenus].map((f) => f.montantHt).filter((m): m is number => m !== null);
 
   return {
     montantHt: hts.length ? round2(hts.reduce((a, m) => a + m, 0)) : null,
     dateEnvoi: envois.length ? envois.reduce((min, d) => (d < min ? d : min)) : null, // plus ancienne (ISO → lexicographique)
     datePaiement: paiements.length ? paiements.reduce((max, d) => (d > max ? d : max)) : null, // plus récente
-    montantDepose: htsDeposes.length ? round2(htsDeposes.reduce((a, m) => a + m, 0)) : null,
+    montantDepose: compteesPositives.length ? round2(htsDeposes.reduce((a, m) => a + m, 0)) : null,
   };
 }
 
@@ -304,6 +321,7 @@ async function readFactures(id: string, client: DendreoClient): Promise<FactureL
     return raw.map((f) => {
       const htRaw = f.montant_total_ht;
       const ht = htRaw == null || String(htRaw).trim() === '' ? null : parseMontant(htRaw);
+      const parentRaw = String(f.id_parent ?? '').trim();
       return {
         idFacture: String(f.id_facture ?? ''),
         idOpca: String(f.id_opca ?? ''),
@@ -311,6 +329,7 @@ async function readFactures(id: string, client: DendreoClient): Promise<FactureL
         montantHt: ht,
         datePaiement: toParisDay(f.date_paiement),
         dateEmission: toParisDay(f.date_emission),
+        idParent: parentRaw === '' || parentRaw === '0' ? null : parentRaw, // même réponse, 0 appel ajouté
       };
     });
   } catch (err) {

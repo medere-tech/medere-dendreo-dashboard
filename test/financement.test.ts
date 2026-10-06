@@ -30,7 +30,8 @@ const fac = (
   datePaiement: string | null,
   dateEmission: string | null = null,
   idFacture = '', // S15 : départage du tri quand deux factures partagent la date d'émission
-): FactureLine => ({ idFacture, idOpca, montantHt, dateEnvoi, datePaiement, dateEmission });
+  idParent: string | null = null, // avoir → id_facture de la facture annulée
+): FactureLine => ({ idFacture, idOpca, montantHt, dateEnvoi, datePaiement, dateEmission, idParent });
 
 describe('parseMontant / toParisDay', () => {
   it('parseMontant gère virgule décimale, chaîne Dendreo et vide', () => {
@@ -177,6 +178,87 @@ describe('aggregateFacturesAndpc — montantDepose : déposées (date_envoi) vs 
       fac(ANDPC_ID, 300, '2026-03-02', null),
     ]);
     expect(r.montantDepose).toBe(300);
+  });
+
+  // --- Avoirs : règle LIÉE {facture, avoir} via id_parent ------------------------
+  // Un avoir (HT < 0) n'est soustrait QUE si sa parente (idFacture === avoir.idParent)
+  // est une « comptée positive » (HT > 0 ET date_envoi). Recon 200 sessions : 17/17.
+  /** Avoir : id propre + id_parent → parente ; sans date_envoi (cas réel). */
+  const avoir = (idFacture: string, montantHt: number, idParent: string | null, datePaiement: string | null = null) =>
+    fac(ANDPC_ID, montantHt, null, datePaiement, null, idFacture, idParent);
+
+  it('cas réel 3636 : retoquée (comptée) + avoir qui la pointe + refaite → avoir soustrait → 5700', () => {
+    const r = aggregateFacturesAndpc([
+      fac(ANDPC_ID, 5852, '2026-03-02', null, null, '4848'),          // 1re demande, RETOQUÉE (comptée)
+      avoir('4901', -5852, '4848', '2026-03-20'),                       // AVOIR → parente 4848 comptée
+      fac(ANDPC_ID, 5700, '2026-03-25', '2026-04-15', null, '4950'),   // demande refaite, payée
+    ]);
+    expect(r.montantDepose).toBe(5700); // et non 11552
+  });
+
+  it("cas 2948 : avoir dont la parente n'a PAS de date_envoi → avoir IGNORÉ → 12502 (pas −532)", () => {
+    const r = aggregateFacturesAndpc([
+      fac(ANDPC_ID, 13034, null, null, null, '3100'),                  // parente SANS date_envoi → non comptée
+      avoir('3101', -13034, '3100'),                                    // → ignoré (sinon retranche un montant jamais ajouté)
+      fac(ANDPC_ID, 12502, '2026-02-10', '2026-03-01', null, '3102'),  // seule comptée positive
+    ]);
+    expect(r.montantDepose).toBe(12502);
+  });
+
+  it('cas 2460 : parente sans date_envoi, AUCUNE autre comptée → null (pas −6042)', () => {
+    const r = aggregateFacturesAndpc([
+      fac(ANDPC_ID, 6042, null, null, null, '2200'),
+      avoir('2201', -6042, '2200'),
+    ]);
+    expect(r.montantDepose).toBeNull();
+  });
+
+  it('avoir dont la parente A une date_envoi → soustrait (annulation correcte)', () => {
+    const r = aggregateFacturesAndpc([
+      fac(ANDPC_ID, 1000, '2026-02-01', null, null, 'A'),
+      avoir('B', -400, 'A'),                                           // avoir partiel sur A comptée
+      fac(ANDPC_ID, 250, '2026-02-15', null, null, 'C'),
+    ]);
+    expect(r.montantDepose).toBe(850); // 1000 − 400 + 250
+  });
+
+  it("annulation totale d'une comptée seule → 0 (pas null : il y a bien une comptée positive)", () => {
+    const r = aggregateFacturesAndpc([fac(ANDPC_ID, 1000, '2026-02-01', null, null, 'A'), avoir('B', -1000, 'A')]);
+    expect(r.montantDepose).toBe(0);
+  });
+
+  it('avoir SANS id_parent, ou pointant une facture absente → ignoré', () => {
+    const r = aggregateFacturesAndpc([
+      fac(ANDPC_ID, 500, '2026-02-01', null, null, 'A'),
+      avoir('B', -500, null),
+      avoir('C', -500, 'ZZZ'),
+    ]);
+    expect(r.montantDepose).toBe(500);
+  });
+
+  it("facture POSITIVE sans date_envoi, pas d'avoir → exclue (null)", () => {
+    expect(aggregateFacturesAndpc([fac(ANDPC_ID, 2000, null, null)]).montantDepose).toBeNull();
+  });
+
+  it("non-régression 3164 (à cheval) : 2 positives déposées, pas d'avoir → 10687.50", () => {
+    const r = aggregateFacturesAndpc([
+      fac(ANDPC_ID, 6982.5, '2026-05-04', null),
+      fac(ANDPC_ID, 3705, '2026-05-18', null),
+    ]);
+    expect(r.montantDepose).toBe(10687.5);
+  });
+
+  it('non-régression 3818 : 1 positive déposée → 7695', () => {
+    expect(aggregateFacturesAndpc([fac(ANDPC_ID, 7695, '2026-06-10', null)]).montantDepose).toBe(7695);
+  });
+
+  it("montantHt (payé) INCHANGÉ par la règle liée : l'avoir payé reste dans le payé", () => {
+    const r = aggregateFacturesAndpc([
+      fac(ANDPC_ID, 5852, '2026-03-02', '2026-03-10', null, '4848'),
+      avoir('4901', -5852, '4848', '2026-03-20'),
+      fac(ANDPC_ID, 5700, '2026-03-25', '2026-04-15', null, '4950'),
+    ]);
+    expect(r.montantHt).toBe(5700); // 5852 − 5852 + 5700 : calcul payé historique
   });
 });
 
