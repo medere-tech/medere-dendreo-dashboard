@@ -22,3 +22,14 @@ Thumbs.db
 scratchpad/
 recon-output*.txt
 recon-output*.json
+
+# Scripts de recon/diagnostic jetables (one-shot, non versionnes)
+scripts/recon-*.mjs
+scripts/diag-*.mjs
+scripts/verify-*.mjs
+scripts/mesurer-toutes-signees.mjs
+scripts/trouver-temoin-depose.mjs
+cheval-2025-2026-ids.txt
+
+# Exception : outil ops reutilisable (garde malgre la regle recon-*)
+!scripts/recon-modules-facturables.mjs
