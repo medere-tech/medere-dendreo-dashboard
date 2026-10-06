@@ -48,6 +48,7 @@ function make(over: Partial<SessionDoc> & { idAdf: string }): SessionDoc {
     factureDateEnvoi: over.factureDateEnvoi ?? null,
     factureMontantHt: over.factureMontantHt ?? null,
     factureDatePaiement: over.factureDatePaiement ?? null,
+    factureMontantDepose: over.factureMontantDepose ?? null,
     facture1DateEnvoi: over.facture1DateEnvoi ?? null,
     facture1DatePaiement: over.facture1DatePaiement ?? null,
     facture2DateEnvoi: over.facture2DateEnvoi ?? null,

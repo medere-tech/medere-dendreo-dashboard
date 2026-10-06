@@ -44,7 +44,7 @@ function session(over: Partial<SessionDoc> = {}): SessionDoc {
     idEtapeProcess: '6', etape: 'Réalisation', idCentre: '1', type: 'inter', totalParticipants: 4,
     format: 'Mixte', aCheval: false, facturableAnneeN: false, eppAmontConnecte: false, eppAvalConnecte: false, eligibleDpc: true, aEpp: true,
     datesSynchrones: [],
-    financeurAndpc: false, montantAndpc: null, factureDateEnvoi: null, factureMontantHt: null, factureDatePaiement: null,
+    financeurAndpc: false, montantAndpc: null, factureDateEnvoi: null, factureMontantHt: null, factureDatePaiement: null, factureMontantDepose: null,
     facture1DateEnvoi: null, facture1DatePaiement: null, facture2DateEnvoi: null, facture2DatePaiement: null,
     counts: {
       envoyes: 3, signes: 1, nonSignes: 2, participantsConcernes: 3, participantsARelancer: 2,
@@ -98,7 +98,7 @@ describe('COCKPIT — colonnes & mapping', () => {
   it('entêtes = ordre EXACT du Sheet Ops (18 colonnes)', () => {
     expect(SESSIONS_CSV_HEADERS).toEqual([
       'DPC', 'Intitulé', 'N° CP', 'Session', 'Organisation', 'Début', 'Fin', 'EPP CO/NC', 'Cheval?',
-      'Date de dépôt', 'Montant €', 'Date de paiement', 'Signatures', 'Commentaire', 'Relance',
+      'Date de dépôt', 'Montant € payé', 'Date de paiement', 'Signatures', 'Commentaire', 'Relance',
       'Attestation manquante', 'Dendreo', 'Dossier', 'Lien stockage',
     ]);
   });
@@ -144,12 +144,12 @@ describe('COCKPIT — colonnes & mapping', () => {
     expect(row[4]).toBe('');
   });
 
-  it('S11.2 : colonnes facture AUTO remplies (Date de dépôt / Montant € / Date de paiement)', () => {
+  it('S11.2 : colonnes facture AUTO remplies (Date de dépôt / Montant € payé / Date de paiement)', () => {
     const row = sessionToCsvRow(session({
       factureDateEnvoi: '2026-07-03', factureMontantHt: 1111.5, factureDatePaiement: '2026-07-20',
     }));
     expect(row[9]).toBe('03/07/26'); // Date de dépôt ← factureDateEnvoi
-    expect(row[10]).toBe('1111,50'); // Montant € ← factureMontantHt (virgule FR, 2 décimales)
+    expect(row[10]).toBe('1111,50'); // Montant € payé ← factureMontantHt (virgule FR, 2 décimales)
     expect(row[11]).toBe('20/07/26'); // Date de paiement ← factureDatePaiement
   });
 
@@ -179,17 +179,26 @@ describe('COCKPIT — variante "sheet" (idAdf + réutilisation du CSV)', () => {
   const col = (row: readonly string[], header: string): string | undefined =>
     row[SESSIONS_SHEET_HEADERS.indexOf(header as (typeof SESSIONS_SHEET_HEADERS)[number])];
 
-  it('entêtes sheet = idAdf + CSV + "À relancer (noms)" + S11.2 + "Dates synchrones" + facture 1/2 EN FIN', () => {
+  it('entêtes sheet = idAdf + CSV + "À relancer (noms)" + S11.2 + "Dates synchrones" + facture 1/2 + "Montant déposé" EN FIN', () => {
     expect(SESSIONS_SHEET_HEADERS).toEqual([
       'idAdf', ...SESSIONS_CSV_HEADERS, 'À relancer (noms)', 'Montant session', 'Hors DPC (nb)', 'Dates synchrones',
       'Facture 1 - envoi', 'Facture 1 - paiement', 'Facture 2 - envoi', 'Facture 2 - paiement',
+      'Montant déposé',
     ]);
     expect(SESSIONS_SHEET_HEADERS[0]).toBe('idAdf');
-    // S15 : les 4 nouvelles sont EN FIN → aucun index de colonne existante ne bouge.
-    expect(SESSIONS_SHEET_HEADERS.slice(-4)).toEqual([
+    // "Montant déposé" EN DERNIER → aucun index de colonne existante ne bouge.
+    expect(SESSIONS_SHEET_HEADERS.at(-1)).toBe('Montant déposé');
+    // S15 : les 4 colonnes facture 1/2 juste avant.
+    expect(SESSIONS_SHEET_HEADERS.slice(-5, -1)).toEqual([
       'Facture 1 - envoi', 'Facture 1 - paiement', 'Facture 2 - envoi', 'Facture 2 - paiement',
     ]);
-    expect(SESSIONS_SHEET_HEADERS.at(-5)).toBe('Dates synchrones'); // inchangée de position relative
+    expect(SESSIONS_SHEET_HEADERS.at(-6)).toBe('Dates synchrones'); // inchangée de position relative
+  });
+
+  it('renommage "Montant €" → "Montant € payé" EN PLACE (index 11 dans le sheet, 10 dans le CSV)', () => {
+    expect(SESSIONS_SHEET_HEADERS).not.toContain('Montant €');
+    expect(SESSIONS_CSV_HEADERS.indexOf('Montant € payé')).toBe(10);
+    expect(SESSIONS_SHEET_HEADERS.indexOf('Montant € payé')).toBe(11);
   });
 
   it('AUCUN en-tête dupliqué dans la variante sheet (protège l\'Apps Script)', () => {
@@ -206,7 +215,7 @@ describe('COCKPIT — variante "sheet" (idAdf + réutilisation du CSV)', () => {
     const s = session({ idAdf: '2656', aCheval: true, eppAmontConnecte: true });
     const row = sessionToSheetRow(s, ['Hugo CASTAN']);
     expect(row[0]).toBe('2656'); // clé de correspondance
-    expect(row).toHaveLength(SESSIONS_SHEET_HEADERS.length); // = 1 + 19 + 1 + 3 + 4 (S15)
+    expect(row).toHaveLength(SESSIONS_SHEET_HEADERS.length); // = 1 + 19 + 1 + 3 + 4 (S15) + 1 (Montant déposé)
     // Réutilisation : la tranche CSV (après idAdf) == la ligne CSV telle quelle.
     expect(row.slice(1, 1 + CSV_LEN)).toEqual(sessionToCsvRow(s));
     expect(col(row, 'À relancer (noms)')).toBe('Hugo CASTAN');
@@ -225,6 +234,32 @@ describe('COCKPIT — variante "sheet" (idAdf + réutilisation du CSV)', () => {
     expect(col(row, 'Hors DPC (nb)')).toBe(EMPTY_DISPLAY); // 0
   });
 
+  it('sessionToSheetRow : "Montant déposé" ← factureMontantDepose (même format montantFr que "Montant € payé")', () => {
+    const row = sessionToSheetRow(session({ idAdf: '1', factureMontantHt: 6960.34, factureMontantDepose: 6960.34 }));
+    expect(col(row, 'Montant déposé')).toBe('6960,34');
+    expect(col(row, 'Montant déposé')).toBe(col(row, 'Montant € payé')); // format strictement identique
+    expect(col(sessionToSheetRow(session({ idAdf: '1', factureMontantDepose: 16929 })), 'Montant déposé')).toBe('16929,00');
+  });
+
+  it('sessionToSheetRow : factureMontantDepose null → EMPTY_DISPLAY', () => {
+    expect(col(sessionToSheetRow(session({ idAdf: '1', factureMontantDepose: null })), 'Montant déposé')).toBe(EMPTY_DISPLAY);
+  });
+
+  it('témoin déposée NON payée → "Montant € payé" = "-" et "Montant déposé" = "1200,00"', () => {
+    const row = sessionToSheetRow(session({
+      idAdf: '1', factureDateEnvoi: '2026-07-03', factureMontantHt: null, factureDatePaiement: null, factureMontantDepose: 1200,
+    }));
+    expect(col(row, 'Montant € payé')).toBe(EMPTY_DISPLAY);
+    expect(col(row, 'Montant déposé')).toBe('1200,00');
+    expect(col(row, 'Date de dépôt')).toBe('03/07/26');
+    expect(col(row, 'Date de paiement')).toBe(EMPTY_DISPLAY);
+  });
+
+  it('"Montant déposé" reste propre au format sheet : absente du CSV cockpit', () => {
+    expect(SESSIONS_CSV_HEADERS).not.toContain('Montant déposé');
+    expect(sessionToCsvRow(session({ factureMontantDepose: 1200 }))).toHaveLength(SESSIONS_CSV_HEADERS.length);
+  });
+
   it('sessionToSheetRow : "Dates synchrones" (JJ/MM/AA, ", ", [] → "-")', () => {
     // mixte, 1 date → "15/06/26"
     expect(col(sessionToSheetRow(session({ idAdf: '1', format: 'Mixte', datesSynchrones: ['2026-06-15'] })), 'Dates synchrones')).toBe('15/06/26');
@@ -235,13 +270,15 @@ describe('COCKPIT — variante "sheet" (idAdf + réutilisation du CSV)', () => {
   });
 
   // --- S15 : 4 colonnes facture 1/2 (sessions à cheval) ----------------------
+  // Lues PAR EN-TÊTE (plus par position) : "Montant déposé" est désormais APRÈS elles.
+  const FACTURES_12 = ['Facture 1 - envoi', 'Facture 1 - paiement', 'Facture 2 - envoi', 'Facture 2 - paiement'];
   it('sessionToSheetRow : cas réel 3246 — F1 envoi+paiement, F2 envoi seul (impayée)', () => {
     const row = sessionToSheetRow(session({
       idAdf: '3246', aCheval: true,
       facture1DateEnvoi: '2026-07-03', facture1DatePaiement: '2026-07-20',
       facture2DateEnvoi: '2026-07-13', facture2DatePaiement: null,
     }));
-    expect(row.slice(-4)).toEqual(['03/07/26', '20/07/26', '13/07/26', EMPTY_DISPLAY]);
+    expect(FACTURES_12.map((h) => col(row, h))).toEqual(['03/07/26', '20/07/26', '13/07/26', EMPTY_DISPLAY]);
   });
 
   it('sessionToSheetRow : cas réel 3328 — F1 payée SANS date d\'envoi, F2 envoyée non payée', () => {
@@ -258,7 +295,7 @@ describe('COCKPIT — variante "sheet" (idAdf + réutilisation du CSV)', () => {
 
   it('sessionToSheetRow : session NON à cheval → les 4 colonnes S15 à "-"', () => {
     const row = sessionToSheetRow(session({ idAdf: '1', aCheval: false }));
-    expect(row.slice(-4)).toEqual([EMPTY_DISPLAY, EMPTY_DISPLAY, EMPTY_DISPLAY, EMPTY_DISPLAY]);
+    expect(FACTURES_12.map((h) => col(row, h))).toEqual([EMPTY_DISPLAY, EMPTY_DISPLAY, EMPTY_DISPLAY, EMPTY_DISPLAY]);
   });
 
   it('sessionToSheetRow : idAdf vide reste en 1re colonne (pas de crash, cohérent CSV)', () => {
@@ -269,8 +306,8 @@ describe('COCKPIT — variante "sheet" (idAdf + réutilisation du CSV)', () => {
   });
 
   it('sessionToSheetRow sans noms → EMPTY_DISPLAY dans la colonne noms (jamais "")', () => {
-    expect(sessionToSheetRow(session({ idAdf: '1' })).at(-4)).toBe(EMPTY_DISPLAY);
-    expect(sessionToSheetRow(session({ idAdf: '1' }), []).at(-4)).toBe(EMPTY_DISPLAY);
+    expect(col(sessionToSheetRow(session({ idAdf: '1' })), 'À relancer (noms)')).toBe(EMPTY_DISPLAY);
+    expect(col(sessionToSheetRow(session({ idAdf: '1' }), []), 'À relancer (noms)')).toBe(EMPTY_DISPLAY);
   });
 });
 

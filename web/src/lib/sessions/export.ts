@@ -64,7 +64,7 @@ export function attestationManquante(c: Counts): string {
 // --- COCKPIT (ordre EXACT du Sheet Ops) -------------------------------------
 export const SESSIONS_CSV_HEADERS = [
   'DPC', 'Intitulé', 'N° CP', 'Session', 'Organisation', 'Début', 'Fin', 'EPP CO/NC', 'Cheval?',
-  'Date de dépôt', 'Montant €', 'Date de paiement', 'Signatures', 'Commentaire', 'Relance',
+  'Date de dépôt', 'Montant € payé', 'Date de paiement', 'Signatures', 'Commentaire', 'Relance',
   'Attestation manquante', 'Dendreo', 'Dossier', 'Lien stockage',
 ] as const;
 
@@ -81,7 +81,7 @@ export function sessionToCsvRow(s: SessionDoc): string[] {
     eppCoNc(s),
     s.aCheval ? '✅' : '❌',
     ddmmyyOrDash(s.factureDateEnvoi), // Date de dépôt    ← factureDateEnvoi (S11.2, auto)
-    montantFr(s.factureMontantHt), // Montant €        ← factureMontantHt (S11.2, auto, virgule FR)
+    montantFr(s.factureMontantHt), // Montant € payé   ← factureMontantHt (S11.2, auto, virgule FR)
     ddmmyyOrDash(s.factureDatePaiement), // Date de paiement ← factureDatePaiement (S11.2, auto)
     signaturesSummary(c),
     '', // Commentaire     (Ops)
@@ -112,15 +112,18 @@ export function sessionsToCsv(rows: readonly SessionDoc[]): string {
 export const RELANCE_NOMS_HEADER = 'À relancer (noms)';
 // S11.2 — 2 colonnes ajoutées EN FIN (après les noms). Les données facture (dépôt,
 // montant facturé, paiement) remplissent les colonnes CSV EXISTANTES (Date de dépôt /
-// Montant € / Date de paiement, cf. sessionToCsvRow) → aucun en-tête dupliqué ici.
+// Montant € payé / Date de paiement, cf. sessionToCsvRow) → aucun en-tête dupliqué ici.
 // S12.2 — "Dates synchrones" ajoutée EN FIN (après "Hors DPC (nb)") : nouveau champ,
 // aucune collision d'index avec les colonnes existantes du Sheet Ops.
 // S15 — 4 colonnes facture 1/2 ajoutées EN FIN (après "Dates synchrones") : elles ne
-// concernent QUE les sessions à cheval (sinon "-"), et la colonne "Montant €" (montant
-// payé) reste STRICTEMENT inchangée. Aucun index de colonne existante ne bouge.
+// concernent QUE les sessions à cheval (sinon "-"), et la colonne "Montant € payé"
+// (ex-"Montant €") reste STRICTEMENT inchangée. Aucun index de colonne existante ne bouge.
+// "Montant déposé" ajoutée EN FIN (après "Facture 2 - paiement") : Σ HT des factures ANDPC
+// DÉPOSÉES, payées ou non — remplie dès le dépôt, contrairement à "Montant € payé".
 export const V2_SHEET_HEADERS = [
   'Montant session', 'Hors DPC (nb)', 'Dates synchrones',
   'Facture 1 - envoi', 'Facture 1 - paiement', 'Facture 2 - envoi', 'Facture 2 - paiement',
+  'Montant déposé',
 ] as const;
 export const SESSIONS_SHEET_HEADERS = ['idAdf', ...SESSIONS_CSV_HEADERS, RELANCE_NOMS_HEADER, ...V2_SHEET_HEADERS] as const;
 
@@ -150,10 +153,11 @@ export function datesSynchronesCell(dates: readonly string[] = []): string {
 
 /**
  * Ligne "sheet" : idAdf + ligne CSV cockpit + "À relancer (noms)" + les 2 colonnes S11.2
- * + "Dates synchrones" (S12.2) + les 4 colonnes facture 1/2 (S15).
+ * + "Dates synchrones" (S12.2) + les 4 colonnes facture 1/2 (S15) + "Montant déposé".
  *  - `noms`         : participants pending À RELANCER (financeurAndpc true|null), déjà filtrés/dédup en amont.
  *  - `horsDpcCount` : nb de participants pending financeurAndpc===false (hors-DPC → non relancés). 0 → EMPTY_DISPLAY.
- * "Montant session" = montantAndpc (Σ financements 360) ; distinct de "Montant €" = montant FACTURÉ.
+ * "Montant session" = montantAndpc (Σ financements 360) ; distinct de "Montant € payé" = montant FACTURÉ PAYÉ,
+ * et de "Montant déposé" = montant FACTURÉ DÉPOSÉ (payé ou non, même format montantFr).
  * Les 4 colonnes S15 sont "-" hors session à cheval : le miroir les y laisse null.
  */
 export function sessionToSheetRow(s: SessionDoc, noms: readonly string[] = [], horsDpcCount = 0): string[] {
@@ -168,6 +172,7 @@ export function sessionToSheetRow(s: SessionDoc, noms: readonly string[] = [], h
     ddmmyyOrDash(s.facture1DatePaiement), // Facture 1 - paiement  (S15)
     ddmmyyOrDash(s.facture2DateEnvoi), // Facture 2 - envoi     (S15)
     ddmmyyOrDash(s.facture2DatePaiement), // Facture 2 - paiement  (S15)
+    montantFr(s.factureMontantDepose), // Montant déposé ← factureMontantDepose (virgule FR, "-" si null)
   ];
 }
 

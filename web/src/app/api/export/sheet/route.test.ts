@@ -126,13 +126,15 @@ describe('GET /api/export/sheet', () => {
   it('idAdf en 1re colonne ; tranche CSV == EXACTEMENT l\'export CSV (réutilisation prouvée)', async () => {
     const GET = await freshRoute();
     const body = await (await GET(req(`Bearer ${TOKEN}`))).json();
-    // entêtes = 'idAdf' + CSV + noms + S11.2 + Dates synchrones (S12.2) + facture 1/2 (S15).
+    // entêtes = 'idAdf' + CSV + noms + S11.2 + Dates synchrones (S12.2) + facture 1/2 (S15) + Montant déposé.
     // La route ne redéfinit AUCUN en-tête : elle sert SESSIONS_SHEET_HEADERS tel quel.
     expect(body.headers).toEqual([...SESSIONS_SHEET_HEADERS]);
     expect(body.headers.slice(0, 1 + SESSIONS_CSV_HEADERS.length)).toEqual(['idAdf', ...SESSIONS_CSV_HEADERS]);
-    expect(body.headers.slice(-4)).toEqual([
-      'Facture 1 - envoi', 'Facture 1 - paiement', 'Facture 2 - envoi', 'Facture 2 - paiement',
+    expect(body.headers.slice(-5)).toEqual([
+      'Facture 1 - envoi', 'Facture 1 - paiement', 'Facture 2 - envoi', 'Facture 2 - paiement', 'Montant déposé',
     ]);
+    expect(body.headers).toContain('Montant € payé');
+    expect(body.headers).not.toContain('Montant €');
     const row = body.rows[0];
     expect(row[0]).toBe('2691'); // clé de correspondance
     // la tranche CSV (après idAdf) == la ligne CSV normalisée telle quelle
@@ -438,6 +440,21 @@ describe('GET /api/export/sheet — colonne "Montant session"', () => {
     const body = await (await GET(req(`Bearer ${TOKEN}`))).json();
     expect(montantDe(body, 'avec')).toBe('5168,00');
     expect(montantDe(body, 'sans')).toBe(EMPTY_DISPLAY);
+  });
+
+  it('"Montant déposé" ← factureMontantDepose ; témoin déposé non payé ; doc sans le champ → "-"', async () => {
+    getMock.mockResolvedValue(asDocs([
+      { ...rawWith('paye', '2026-05-10T00:00:00'), factureMontantHt: 6960.34, factureMontantDepose: 6960.34 },
+      { ...rawWith('depose', '2026-05-11T00:00:00'), factureMontantHt: null, factureMontantDepose: 1200 },
+      rawWith('absent', '2026-05-12T00:00:00'), // doc miroir sans le champ
+    ]));
+    const GET = await freshRoute();
+    const body = await (await GET(req(`Bearer ${TOKEN}`))).json();
+    expect(cellule(body, 'paye', 'Montant déposé')).toBe('6960,34');
+    expect(cellule(body, 'paye', 'Montant € payé')).toBe('6960,34');
+    expect(cellule(body, 'depose', 'Montant € payé')).toBe(EMPTY_DISPLAY);
+    expect(cellule(body, 'depose', 'Montant déposé')).toBe('1200,00');
+    expect(cellule(body, 'absent', 'Montant déposé')).toBe(EMPTY_DISPLAY);
   });
 });
 

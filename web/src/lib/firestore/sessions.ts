@@ -55,6 +55,7 @@ export interface SessionDoc {
   factureDateEnvoi: string | null; // S13.3 — plus ancienne date_envoi de TOUTES les factures ANDPC, payées OU NON (jour Paris)
   factureMontantHt: number | null; // Σ montant_total_ht des factures ANDPC PAYÉES
   factureDatePaiement: string | null; // plus récente date_paiement des factures ANDPC PAYÉES (jour Paris)
+  factureMontantDepose: number | null; // Σ montant_total_ht des factures ANDPC DÉPOSÉES (date_envoi), payées OU NON
   // --- S15 : facture 1 / facture 2 des sessions À CHEVAL ---------------------
   // Factures ANDPC triées par date_emission croissante : 1 = budget année de DÉBUT,
   // 2 = budget année de FIN. TOUS null hors session à cheval (jour Paris | null).
@@ -145,6 +146,7 @@ export function toSessionDoc(raw: DocumentData): SessionDoc {
     factureDateEnvoi: asNullableStr(raw.factureDateEnvoi),
     factureMontantHt: asNullableNum(raw.factureMontantHt),
     factureDatePaiement: asNullableStr(raw.factureDatePaiement),
+    factureMontantDepose: asNullableNum(raw.factureMontantDepose), // doc pré-dépôt (champ absent) → null
     // S15 — absents d'un doc pré-S15 → null (jamais undefined côté UI/export).
     facture1DateEnvoi: asNullableStr(raw.facture1DateEnvoi),
     facture1DatePaiement: asNullableStr(raw.facture1DatePaiement),

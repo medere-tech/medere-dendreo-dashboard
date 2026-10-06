@@ -64,6 +64,7 @@ function session(over: Partial<SessionDoc> & { idAdf: string }): SessionDoc {
     factureDateEnvoi: null,
     factureMontantHt: null,
     factureDatePaiement: null,
+    factureMontantDepose: null,
     facture1DateEnvoi: null,
     facture1DatePaiement: null,
     facture2DateEnvoi: null,

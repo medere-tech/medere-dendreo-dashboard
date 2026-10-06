@@ -47,6 +47,12 @@ describe('toSessionDoc — normalisation défensive à la lecture', () => {
     expect(toSessionDoc({ idAdf: '1', numeroComplet: 'ADF_1', facturableAnneeN: 'oui' }).facturableAnneeN).toBe(false);
   });
 
+  it('factureMontantDepose : absent → null ; nombre conservé ; non-nombre → null', () => {
+    expect(toSessionDoc({ idAdf: '1', numeroComplet: 'ADF_1' }).factureMontantDepose).toBeNull(); // doc pré-dépôt
+    expect(toSessionDoc({ idAdf: '1', numeroComplet: 'ADF_1', factureMontantDepose: 800 }).factureMontantDepose).toBe(800);
+    expect(toSessionDoc({ idAdf: '1', numeroComplet: 'ADF_1', factureMontantDepose: '800' }).factureMontantDepose).toBeNull();
+  });
+
   it('numeroSessionDpc / numeroCompteProduit absents → null (jamais undefined)', () => {
     const s = toSessionDoc({ idAdf: '1', numeroComplet: 'ADF_1' });
     expect(s.numeroSessionDpc).toBeNull();

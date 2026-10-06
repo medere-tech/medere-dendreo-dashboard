@@ -193,12 +193,17 @@ Deux garanties importantes :
 - **Manuellement**, à tout moment, via le menu **« Médéré → Actualiser »** dans le Sheet.
 
 ### Ce qu'un Ops voit comme « vide » — et pourquoi c'est normal
-Les colonnes de **facturation** (date de dépôt, montant facturé, date de paiement) restent **vides
-tant que la session n'a pas été facturée** dans Dendreo. Une session récente qui vient de se
-terminer n'en est pas encore à l'étape facture : ses colonnes se rempliront **progressivement**,
-au fil des semaines. La **date de dépôt** apparaît **dès que la facture est déposée** ; le
-**montant** et la **date de paiement** attendent le **paiement**. Une session avec une date de
-dépôt mais un montant vide est donc **normale** : la facture est déposée, pas encore payée.
+Les colonnes de **facturation** (« Date de dépôt », « Montant déposé », « Montant € payé »,
+« Date de paiement ») restent **vides tant que la session n'a pas été facturée** dans Dendreo. Une
+session récente qui vient de se terminer n'en est pas encore à l'étape facture : ses colonnes se
+rempliront **progressivement**, au fil des semaines.
+- La **date de dépôt** et le **« Montant déposé »** apparaissent **dès que la facture est déposée**
+  (somme HT des factures ANDPC déposées, payées ou non).
+- Le **« Montant € payé »** (anciennement « Montant € ») et la **date de paiement** attendent le
+  **paiement** (somme HT des factures ANDPC payées uniquement).
+
+Une session avec un « Montant déposé » rempli mais un « Montant € payé » vide est donc **normale** :
+la facture est déposée, pas encore payée.
 « Vide » veut dire « pas encore à cette étape », pas « donnée manquante ».
 
 ### Le périmètre du Sheet
