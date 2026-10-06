@@ -3,6 +3,7 @@
 
 import { describe, it, expect } from 'vitest';
 import {
+  affineFormatMixte,
   computeFacturableAnneeN,
   deriveEligibleDpc,
   deriveNumeroCompteProduit,
@@ -345,5 +346,56 @@ describe('computeFacturableAnneeN (S18)', () => {
       ];
       expect(computeFacturableAnneeN(lams, TODAY)).toBe(true);
     });
+  });
+});
+
+describe('affineFormatMixte — Mixte → CV / présentiel (mode du LAM CŒUR)', () => {
+  /** LAM brut : catégorie sur le MODULE inclus, mode_organisation sur le LAM (qui fait foi). */
+  const lam = (categorie: string, mode: string, modeModule = 'mixte') => ({
+    mode_organisation: mode,
+    module: { id_categorie_module: categorie, mode_organisation: modeModule },
+  });
+  const AMONT_ASYNC = lam('22', 'elearning_async');
+  const AVAL_ASYNC = lam('21', 'elearning_async');
+
+  it('mixte + 1 cœur elearning_sync → « Mixte - Classe virtuelle »', () => {
+    expect(affineFormatMixte('Mixte', [AMONT_ASYNC, lam('13', 'elearning_sync'), AVAL_ASYNC])).toBe('Mixte - Classe virtuelle');
+  });
+
+  it('mixte + cœurs [elearning_sync, elearning_sync] → « Mixte - Classe virtuelle »', () => {
+    expect(affineFormatMixte('Mixte', [lam('13', 'elearning_sync'), lam('15', 'elearning_sync')])).toBe('Mixte - Classe virtuelle');
+  });
+
+  it('mixte + 1 cœur presentiel (amont/aval async) → « Mixte - Présentiel »', () => {
+    expect(affineFormatMixte('Mixte', [AMONT_ASYNC, lam('13', 'presentiel'), AVAL_ASYNC])).toBe('Mixte - Présentiel');
+  });
+
+  it('mixte + cœurs [presentiel, elearning_sync] → « Mixte - Présentiel » (priorité)', () => {
+    expect(affineFormatMixte('Mixte', [lam('13', 'elearning_sync'), lam('15', 'presentiel')])).toBe('Mixte - Présentiel');
+  });
+
+  it('mixte + cœurs [elearning_async, elearning_sync] (3707/3968) → « Mixte » (flou, inchangé)', () => {
+    expect(affineFormatMixte('Mixte', [lam('13', 'elearning_async'), lam('15', 'elearning_sync')])).toBe('Mixte');
+  });
+
+  it('mixte + 1 cœur elearning_async seul → « Mixte » (flou)', () => {
+    expect(affineFormatMixte('Mixte', [AMONT_ASYNC, lam('13', 'elearning_async'), AVAL_ASYNC])).toBe('Mixte');
+  });
+
+  it('mixte + aucun cœur à catégorie renseignée → « Mixte »', () => {
+    expect(affineFormatMixte('Mixte', [AMONT_ASYNC, lam('', 'presentiel'), AVAL_ASYNC])).toBe('Mixte'); // annexe '' ignorée
+    expect(affineFormatMixte('Mixte', [])).toBe('Mixte');
+  });
+
+  it('format « Présentiel » (non mixte) → inchangé, même avec un cœur elearning_sync', () => {
+    expect(affineFormatMixte('Présentiel', [lam('13', 'elearning_sync')])).toBe('Présentiel');
+  });
+
+  it('format « E-learning » → inchangé', () => {
+    expect(affineFormatMixte('E-learning', [lam('13', 'presentiel')])).toBe('E-learning');
+  });
+
+  it('2934 : le mode du LAM fait foi (LAM presentiel, module mixte) → « Mixte - Présentiel »', () => {
+    expect(affineFormatMixte('Mixte', [lam('13', 'presentiel', 'mixte')])).toBe('Mixte - Présentiel');
   });
 });

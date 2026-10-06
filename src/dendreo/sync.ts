@@ -12,6 +12,7 @@ import { todayInParis } from '../core/paris-day';
 import { DendreoClient } from './client';
 import { getSessionSignatureStatus } from './signatures';
 import {
+  affineFormatMixte,
   computeFacturableAnneeN,
   deriveEligibleDpc,
   deriveNumeroCompteProduit,
@@ -333,7 +334,7 @@ export async function syncSession(
     idCentre: String(adf.id_centre_de_formation ?? ''),
     type: String(adf.type ?? ''),
     totalParticipants: Number(adf.total_participants ?? 0) || 0,
-    format: formatLabel(adf.mode_organisation as string | undefined),
+    format: affineFormatMixte(formatLabel(adf.mode_organisation as string | undefined), lams), // Mixte → CV/présentiel : LAM déjà lus, 0 appel
     aCheval,
     facturableAnneeN: computeFacturableAnneeN(lams, today), // S18 : LAM déjà lus → 0 appel Dendreo
     eppAmontConnecte: eppConnecte(modules, 'amont'),

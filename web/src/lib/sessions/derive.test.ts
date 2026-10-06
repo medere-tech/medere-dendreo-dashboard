@@ -185,6 +185,21 @@ describe('applyFilters — filtres Ops S5.3', () => {
     expect(applyFilters(list, F(), TODAY).map((s) => s.idAdf)).toEqual(['p', 'cv', 'm', 'vide']);
   });
 
+  it('format « Mixte » : matche par PRÉFIXE ses variantes affinées (Présentiel / Classe virtuelle)', () => {
+    const list = [
+      make({ idAdf: 'm', format: 'Mixte' }),
+      make({ idAdf: 'mp', format: 'Mixte - Présentiel' }),
+      make({ idAdf: 'mcv', format: 'Mixte - Classe virtuelle' }),
+      make({ idAdf: 'p', format: 'Présentiel' }),
+      make({ idAdf: 'cv', format: 'Classe virtuelle' }),
+    ];
+    expect(applyFilters(list, F({ formats: ['Mixte'] }), TODAY).map((s) => s.idAdf)).toEqual(['m', 'mp', 'mcv']);
+    // les autres formats gardent l'égalité EXACTE : « Présentiel » ne prend PAS « Mixte - Présentiel »
+    expect(applyFilters(list, F({ formats: ['Présentiel'] }), TODAY).map((s) => s.idAdf)).toEqual(['p']);
+    expect(applyFilters(list, F({ formats: ['Classe virtuelle'] }), TODAY).map((s) => s.idAdf)).toEqual(['cv']);
+    expect(applyFilters(list, F({ formats: ['Mixte', 'Présentiel'] }), TODAY).map((s) => s.idAdf)).toEqual(['m', 'mp', 'mcv', 'p']);
+  });
+
   it('en retard > 30 j : compare le plus vieux pending au jour Paris', () => {
     const list = [
       make({ idAdf: 'vieux', oldestPendingSentDate: '2026-05-01T08:00:00.000000Z' }), // ~41 j avant le 11/06

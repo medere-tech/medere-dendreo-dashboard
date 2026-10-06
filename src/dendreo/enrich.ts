@@ -232,3 +232,36 @@ export function computeFacturableAnneeN(lams: readonly unknown[], today: string)
     return jour !== '' && jour < today; // '' (illisible) → false, jamais d'optimisme
   });
 }
+
+// --- Format MIXTE affiné (CV / présentiel) — règle prouvée sur 32 sessions réelles ---
+// Le `mode_organisation` de SESSION dit seulement « mixte ». Ce qui distingue une mixte
+// en classe virtuelle d'une mixte en présentiel, c'est le `mode_organisation` du LAM
+// CŒUR (catégorie renseignée, ≠ 22 amont, ≠ 21 aval) — au niveau LAM, qui fait foi
+// (2934 : LAM `presentiel`, module `mixte` → présentiel). Témoins 3525 (CV) / 3479 (présentiel).
+//   - un cœur `presentiel`                         → « Mixte - Présentiel » (prioritaire)
+//   - cœurs non vides, TOUS `elearning_sync`       → « Mixte - Classe virtuelle »
+//   - sinon (async au cœur, mélange flou, mode inconnu, aucun cœur) → « Mixte » inchangé
+// Les accents suivent FORMAT_LABELS (« Présentiel »).
+
+export const FORMAT_MIXTE_PRESENTIEL = `${FORMAT_LABELS.mixte} - ${FORMAT_LABELS.presentiel}`;
+export const FORMAT_MIXTE_CV = `${FORMAT_LABELS.mixte} - ${FORMAT_LABELS.elearning_sync}`;
+
+/**
+ * Affine le libellé Format d'une session MIXTE d'après le mode de ses LAM cœur.
+ * PURE. Tout format autre que « Mixte » est renvoyé INCHANGÉ.
+ * @param lams LAM bruts de `lams.php?include=module,creneaux` (déjà lus — 0 appel ajouté).
+ */
+export function affineFormatMixte(formatSession: string, lams: readonly unknown[]): string {
+  if (formatSession !== FORMAT_LABELS.mixte) return formatSession;
+  const modesCoeur: string[] = [];
+  for (const lam of lams) {
+    if (!lam || typeof lam !== 'object') continue;
+    const l = lam as Record<string, unknown>;
+    const categorie = categorieOf(l);
+    if (categorie === '' || categorie === EPP_AMONT_CAT || categorie === EPP_AVAL_CAT) continue;
+    modesCoeur.push(String(l.mode_organisation ?? '').trim()); // niveau LAM, jamais le module
+  }
+  if (modesCoeur.includes('presentiel')) return FORMAT_MIXTE_PRESENTIEL;
+  if (modesCoeur.length > 0 && modesCoeur.every((m) => m === 'elearning_sync')) return FORMAT_MIXTE_CV;
+  return formatSession;
+}

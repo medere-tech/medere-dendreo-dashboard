@@ -44,7 +44,7 @@
 import { loadDendreoEnv, DENDREO } from '../src/config';
 import { DendreoClient } from '../src/dendreo/client';
 import { getSessionSignatureStatus } from '../src/dendreo/signatures';
-import { computeFacturableAnneeN, deriveEligibleDpc, deriveNumeroCompteProduit, eppConnecte, extractDatesSynchrones, formatLabel, hasEpp, isACheval, parseHeures } from '../src/dendreo/enrich';
+import { affineFormatMixte, computeFacturableAnneeN, deriveEligibleDpc, deriveNumeroCompteProduit, eppConnecte, extractDatesSynchrones, formatLabel, hasEpp, isACheval, parseHeures } from '../src/dendreo/enrich';
 import { todayInParis } from '../src/core/paris-day';
 import { enrichFinancement, ensureAndpcValidated, loadCommerciauxReferentiel } from '../src/dendreo/financement';
 import { purgeGhostSignatures } from '../src/dendreo/sync';
@@ -166,7 +166,8 @@ function mapSession(s) {
     idCentre: String(s.id_centre_de_formation ?? ''),
     type: s.type ?? '',
     totalParticipants: Number(s.total_participants ?? 0) || 0,
-    // Enrichissement S5.1b : format + aCheval sont ADF-only (aucune lecture module) ;
+    // Enrichissement S5.1b : format + aCheval sont ADF-only (aucune lecture module) —
+    // format « Mixte » ensuite affiné CV/présentiel par enrichWithModules (affineFormatMixte) ;
     // eppAmontConnecte/eppAvalConnecte + numeroCompteProduit corrigé = fixés dans
     // processSession après lecture des modules (cf. enrichWithModules).
     format: formatLabel(s.mode_organisation),
@@ -235,6 +236,7 @@ async function enrichWithModules(session) {
     session.eligibleDpc = deriveEligibleDpc(mods);
     session.datesSynchrones = extractDatesSynchrones(lams, session.modeOrganisation); // S12.1 : règle niveau session
     session.facturableAnneeN = computeFacturableAnneeN(lams, todayInParis()); // S18 : MÊMES LAM, 0 lecture ajoutée
+    session.format = affineFormatMixte(session.format, lams); // Mixte → CV/présentiel : MÊMES LAM ; lecture KO → reste « Mixte »
     // deriveNumeroCompteProduit garde l'ADF s'il est renseigné (session.numeroCompteProduit
     // non-null), sinon prend le num du module cœur.
     session.numeroCompteProduit = deriveNumeroCompteProduit(session.numeroCompteProduit, mods);

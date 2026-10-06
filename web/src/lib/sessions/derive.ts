@@ -178,13 +178,25 @@ export function applyFilters(
     if (filters.dateFinFrom && finDay < filters.dateFinFrom) return false;
     if (filters.dateFinTo && finDay > filters.dateFinTo) return false;
     // Format multi : passe si ∈ sélection. format '' (pré-backfill) → seulement si aucune sélection.
-    if (filters.formats.length > 0 && !filters.formats.includes(s.format)) return false;
+    if (filters.formats.length > 0 && !matchesFormat(s.format, filters.formats)) return false;
     if (filters.enRetard30 && !isEnRetard(s, todayParis)) return false;
     if (filters.aCheval && !s.aCheval) return false;
     if (filters.eppConnecte && !(s.eppAmontConnecte || s.eppAvalConnecte)) return false;
     if (!matchesSearch(s, filters.search)) return false;
     return true;
   });
+}
+
+const MIXTE = 'Mixte';
+
+/**
+ * Une session passe-t-elle le filtre Format ? Égalité EXACTE, sauf « Mixte » qui couvre
+ * par PRÉFIXE ses variantes affinées côté sync (« Mixte - Présentiel », « Mixte - Classe
+ * virtuelle ») : les options du filtre restent les 4 libellés de base.
+ * « Présentiel » ne matche donc PAS « Mixte - Présentiel ».
+ */
+export function matchesFormat(format: string, selection: readonly string[]): boolean {
+  return selection.some((f) => (f === MIXTE ? format.startsWith(MIXTE) : format === f));
 }
 
 /** Comparateur "urgence" : plus d'à-relancer d'abord, puis plus ancienne demande. */
