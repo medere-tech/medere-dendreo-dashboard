@@ -22,7 +22,8 @@
     "postcss": "$postcss",
     "nanoid": ">=3.3.18",
     "@fastify/busboy": ">=3.2.1",
-    "@grpc/grpc-js": ">=1.14.5"
+    "@grpc/grpc-js": ">=1.14.5",
+    "source-map-js": ">=1.2.2"
   },
   "dependencies": {
     "firebase": "^12.15.0",
