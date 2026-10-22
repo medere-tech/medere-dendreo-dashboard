@@ -120,9 +120,14 @@ export const RELANCE_NOMS_HEADER = 'À relancer (noms)';
 // (ex-"Montant €") reste STRICTEMENT inchangée. Aucun index de colonne existante ne bouge.
 // "Montant déposé" ajoutée EN FIN (après "Facture 2 - paiement") : Σ HT des factures ANDPC
 // DÉPOSÉES, payées ou non — remplie dès le dépôt, contrairement à "Montant € payé".
+// "Montant payé facture 1/2" : chacune JUSTE APRÈS la date de paiement de sa facture
+// (demande métier). Exception assumée à la règle « ajout en fin » : l'Apps Script mappe
+// les colonnes PAR EN-TÊTE (COLONNES_AUTO), pas par index — mais l'en-tête doit être créé
+// à la main dans le Sheet et ajouté à COLONNES_AUTO (cf. RUNBOOK).
 export const V2_SHEET_HEADERS = [
   'Montant session', 'Hors DPC (nb)', 'Dates synchrones',
-  'Facture 1 - envoi', 'Facture 1 - paiement', 'Facture 2 - envoi', 'Facture 2 - paiement',
+  'Facture 1 - envoi', 'Facture 1 - paiement', 'Montant payé facture 1',
+  'Facture 2 - envoi', 'Facture 2 - paiement', 'Montant payé facture 2',
   'Montant déposé',
 ] as const;
 export const SESSIONS_SHEET_HEADERS = ['idAdf', ...SESSIONS_CSV_HEADERS, RELANCE_NOMS_HEADER, ...V2_SHEET_HEADERS] as const;
@@ -153,7 +158,7 @@ export function datesSynchronesCell(dates: readonly string[] = []): string {
 
 /**
  * Ligne "sheet" : idAdf + ligne CSV cockpit + "À relancer (noms)" + les 2 colonnes S11.2
- * + "Dates synchrones" (S12.2) + les 4 colonnes facture 1/2 (S15) + "Montant déposé".
+ * + "Dates synchrones" (S12.2) + les 6 colonnes facture 1/2 (S15 + montants payés) + "Montant déposé".
  *  - `noms`         : participants pending À RELANCER (financeurAndpc true|null), déjà filtrés/dédup en amont.
  *  - `horsDpcCount` : nb de participants pending financeurAndpc===false (hors-DPC → non relancés). 0 → EMPTY_DISPLAY.
  * "Montant session" = montantAndpc (Σ financements 360) ; distinct de "Montant € payé" = montant FACTURÉ PAYÉ,
@@ -170,13 +175,15 @@ export function sessionToSheetRow(s: SessionDoc, noms: readonly string[] = [], h
     datesSynchronesCell(s.datesSynchrones), // Dates synchrones (S12.2)
     ddmmyyOrDash(s.facture1DateEnvoi), // Facture 1 - envoi     (S15, à cheval uniquement)
     ddmmyyOrDash(s.facture1DatePaiement), // Facture 1 - paiement  (S15)
+    montantFr(s.facture1MontantPaye), // Montant payé facture 1 ← montant_total_paiements ("-" si null)
     ddmmyyOrDash(s.facture2DateEnvoi), // Facture 2 - envoi     (S15)
     ddmmyyOrDash(s.facture2DatePaiement), // Facture 2 - paiement  (S15)
+    montantFr(s.facture2MontantPaye), // Montant payé facture 2
     montantFr(s.factureMontantDepose), // Montant déposé ← factureMontantDepose (virgule FR, "-" si null)
   ];
 }
 
-// --- ONGLET "Sessions à cheval 2026 - Auto" (S18) — variante du format "sheet" ---
+// --- ONGLET "Sessions a cheval 2026 - Auto" (S18) — variante du format "sheet" ---
 // 3 colonnes AJOUTÉES EN FIN, servies UNIQUEMENT sur demande explicite de la route
 // (`?blocsCheval=1`). `SESSIONS_SHEET_HEADERS` et `sessionToSheetRow` ne bougent PAS :
 // l'onglet cockpit et l'onglet 25/26 FIGÉ restent identiques au byte près.

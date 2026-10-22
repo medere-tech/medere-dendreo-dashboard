@@ -43,13 +43,31 @@ Une session de formation + son agrégat de signatures (pour la vue transverse et
   //   id_facture croissant → position 1 = année de début, position 2 = année de fin.
   //   ⚠ date_envoi n'est PAS discriminante (une facture 2025 peut être envoyée en 2026 si
   //   des PS signent en retard) et peut être VIDE sur une facture payée (cas réel 3328).
-  //   Session NON à cheval → les 4 champs null. À cheval avec 1 seule facture → facture2* null.
-  //   > 2 factures → seules les 2 plus anciennes alimentent ces colonnes. `factureMontantHt`
-  //   (montant payé) reste l'agrégat S13.3, INCHANGÉ.
-  facture1DateEnvoi: string | null,    // S15 — date_envoi de la facture ANDPC la plus ancienne (JOUR PARIS)
+  //   RÈGLE C — seules les factures ANDPC VIVANTES prennent un slot : on écarte les AVOIRS
+  //   (HT < 0) ET les factures ENTIÈREMENT annulées (Σ HT des avoirs qui les citent en
+  //   id_parent == −HT ; au moins un avoir requis). Tri des vivantes INCHANGÉ. Un avoir
+  //   PARTIEL laisse sa parente vivante, sans calcul de net (signalé, cf. §5 contrôles).
+  //   Preuve (recons montants-f1-f2 + paiements, 724 sessions 2025-2026) : 59 paires
+  //   facture/avoir, toutes soldées par COMPENSATION (avoir HT == −HT, même date_paiement,
+  //   montant_total_paiements = 0 des deux côtés, aucun encaissement), 0 exception.
+  //   Cas 3306 : F1 retoquée + avoir + F1 refaite + F2 → F1 = la refaite, F2 = la vraie F2
+  //   (l'ancienne règle mettait la retoquée en F1 et l'AVOIR en F2).
+  //   Session NON à cheval → les 6 champs null. À cheval avec 1 seule vivante → facture2* null.
+  //   > 2 vivantes → seules les 2 plus anciennes alimentent ces colonnes. `factureMontantHt`
+  //   (montant payé) et `factureMontantDepose` restent les agrégats S13.3, INCHANGÉS.
+  facture1DateEnvoi: string | null,    // S15 — date_envoi de la 1re facture ANDPC VIVANTE par date_emission (JOUR PARIS)
   facture1DatePaiement: string | null, // S15 — date_paiement de cette même facture
-  facture2DateEnvoi: string | null,    // S15 — date_envoi de la 2e facture ANDPC par date_emission
+  facture1MontantPaye: number | null,  // montant_total_paiements de cette même facture (cf. règle de null ci-dessous)
+  facture2DateEnvoi: string | null,    // S15 — date_envoi de la 2e facture ANDPC VIVANTE par date_emission
   facture2DatePaiement: string | null, // S15 — date_paiement de cette même facture
+  facture2MontantPaye: number | null,  // montant_total_paiements de cette même facture
+  //   Montant payé = montant_total_paiements de la facture du slot, TEL QUEL (aucun net calculé).
+  //   null si : session non à cheval, slot vide, champ absent de factures.php, ou facture
+  //   SANS date_paiement ET montant_total_paiements == 0 (ni datée ni encaissée).
+  //   Facture à 0 € datée → 0 (reflet fidèle). Une facture datée sans encaissement, ou
+  //   encaissée sans date, est AFFICHÉE telle quelle et SIGNALÉE (cf. §5 contrôles).
+  //   Preuve que date_paiement ⇔ payée en totalité : 894 factures vivantes, 0 paiement
+  //   partiel daté, 0 encaissement sans date (les 7 « datée + 0 » sont des factures à 0 €).
   facturableAnneeN: boolean,           // S18 — TOUS les modules non-aval (id_categorie_module != 21)
                                        //   ont leur date_fin STRICTEMENT passée (jour Paris, todayInParis()).
                                        //   Deux niveaux DIFFÉRENTS dans lams.php : la catégorie vient du
@@ -133,7 +151,15 @@ Déclarés dans `firestore.indexes.json` :
 - Rejouer le backfill, recevoir un webhook, ou relancer la sync → **met à jour le même doc** sans doublon. Last-write-wins.
 - `counts` et `oldestPendingSentDate` de la session sont **recalculés** à chaque sync de la session (dérivés des `signatures` de cette session).
 - **Enrichissement S5.1b/S6.2/S12.1** (`format`, `aCheval`, `eppAmontConnecte`, `eppAvalConnecte`, `eligibleDpc`, `aEpp`, `datesSynchrones`, `numeroCompteProduit` corrigé) : `format`/`aCheval` sont dérivés de l'ADF seul ; les booléens EPP, `eligibleDpc`, `aEpp`, `datesSynchrones` et la correction `numeroCompteProduit` viennent des **LAM** via **1 lecture / session** — `lams.php?id_action_de_formation={id}&include=module,creneaux` (porte `id_categorie_module`, `c_nombre_dheures_connectees`, `num_programme_dpc`, `eligible_dpc`, et les `creneaux` datés — champ `day`). **`include=creneaux` est GRATUIT** : même requête, aucune lecture Dendreo supplémentaire (S12.0). Logique pure et testée : `src/dendreo/enrich.ts` (`extractDatesSynchrones(lams, sessionMode)`, partagée backfill + sync — le filtre CV/Mixte est **au niveau session**, pas module : le mode du LAM n'est pas fiable, cf. idAdf 3586 présentiel qui a des séances datées). Une lecture LAM KO n'empêche pas l'écriture de la session (valeurs ADF-only conservées ; `datesSynchrones` reste `[]`).
-- **Enrichissement S11.1/S15 — financements + factures** : `enrichFinancement(idAdf, client, aCheval)` (`src/dendreo/financement.ts`, **partagée backfill + sync**) fait **3 lectures résilientes / session** (`financements.php`, `factures.php`, `laps.php`). Le split **S15** (`splitFacturesAcheval`) rejoue les factures **déjà lues** → **0 lecture Dendreo ajoutée**. `aCheval` est passé par l'appelant (déjà calculé par `isACheval(dateDebut, dateFin)`), jamais recalculé ici. Une lecture KO → champs à `null` + `console.warn` sans PII : **la session s'écrit toujours**.
+- **Enrichissement S11.1/S15 — financements + factures** : `enrichFinancement(idAdf, client, aCheval)` (`src/dendreo/financement.ts`, **partagée backfill + sync**) fait **3 lectures résilientes / session** (`financements.php`, `factures.php`, `laps.php`). Le split **S15** (`splitFacturesAcheval`) rejoue les factures **déjà lues** → **0 lecture Dendreo ajoutée**. `aCheval` est passé par l'appelant (déjà calculé par `isACheval(dateDebut, dateFin)`), jamais recalculé ici. Une lecture KO → champs à `null` + `console.warn` sans PII : **la session s'écrit toujours**. `montant_total_paiements` (montants payés F1/F2) est lu dans la **même** réponse `factures.php` → 0 appel ajouté.
+- **Contrôles d'incohérence des factures ANDPC** : `detectIncoherencesFactures` (pure, `src/dendreo/financement.ts`), appelée dans `enrichFinancement` → s'exécute dans **sync ET backfill**, sur **toutes** les sessions (à cheval ou non). Chaque cas → `console.warn` `[factures] ⚠ incohérence idAdf=… id_facture=… : motif` (identifiants et montants uniquement, aucune PII). **Principe : l'outil SIGNALE, il ne corrige RIEN — les corrections se font dans Dendreo**, et la sync suivante les reflète. Les 5 contrôles :
+  1. facture **vivante datée** (date_paiement) avec `montant_total_paiements` = 0 et HT ≠ 0 (datée sans encaissement) ;
+  2. `montant_total_paiements` ≠ 0 **sans date_paiement** (encaissée mais non datée) ;
+  3. **avoir partiel** : Σ HT des avoirs d'une facture ≠ −HT de cette facture ;
+  4. **avoir sans date_paiement** ;
+  5. **avoir orphelin** : `id_parent` vide, ou parente introuvable parmi les factures ANDPC de la session.
+
+  Les paires « facture entièrement annulée + avoir » sont **normales** (compensation Dendreo) : jamais signalées. Un `montant_total_paiements` absent n'est jamais signalé (on ne sait pas). Cas connu au 21/10/2026 : session **3864**, avoir 4430 sans date_paiement et encaissé (345) → 2 signalements à chaque sync jusqu'à correction dans Dendreo.
 - **Suppression de lignes obsolètes — S17.4 (livré).** L'upsert seul ne suffit pas : une ligne disparue côté Dendreo resterait `pending` éternellement. La synchro **supprime** donc les `signatures` **`pending` dont la clé est absente** de la réponse `fichiers.php` du sync en cours (« fantômes »). **Jamais** un `signed` absent → anomalie **loggée**, doc **intact**. La purge tourne **après** les upserts et **avant** `recalcSessionCounts` (compteurs justes en une passe), coûte **+1 requête Firestore/session** (le miroir de la session) et **0 appel Dendreo**. Sur réponse Dendreo douteuse (vide, partielle, clés incomplètes) → **skip total, aucun doc supprimé**, le sync continue. Critère et garde-fous complets : `docs/signature-rule.md` §5 bis. **Activée dans le cron nocturne uniquement** (`backfill --purge`) — pas le webhook, qui appelle `syncSession(..., { purge: false })`.
 
 ## 6. Format des dates (anti-bug fuseau) — DEUX cas distincts

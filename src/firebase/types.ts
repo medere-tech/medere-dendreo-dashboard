@@ -65,14 +65,17 @@ export interface SessionDoc {
   factureDatePaiement: string | null; // plus récente date_paiement des factures id_opca=360 (jour Paris) ; null si aucune/impayé
   factureMontantDepose: number | null; // Σ montant_total_ht des factures id_opca=360 DÉPOSÉES (date_envoi non vide), payées ou non ; null si aucune
   // --- S15 : FACTURE 1 / FACTURE 2 des sessions À CHEVAL ----------------------
-  // Factures ANDPC triées par date_emission croissante (départage id_facture) :
+  // Factures ANDPC VIVANTES (hors avoirs et hors factures entièrement annulées par leurs
+  // avoirs) triées par date_emission croissante (départage id_facture) :
   // position 1 = budget de l'année de DÉBUT, position 2 = budget de l'année de FIN.
-  // TOUS null si la session n'est PAS à cheval. Facture 2 null si une seule facture.
+  // TOUS null si la session n'est PAS à cheval. Facture 2 null si une seule vivante.
   // N'affecte pas factureMontantHt (montant payé), qui reste l'agrégat des payées.
   facture1DateEnvoi: string | null;
   facture1DatePaiement: string | null;
+  facture1MontantPaye: number | null; // montant_total_paiements de la facture 1 ; null si ni datée ni encaissée
   facture2DateEnvoi: string | null;
   facture2DatePaiement: string | null;
+  facture2MontantPaye: number | null; // idem facture 2
   counts: Counts;
   oldestPendingSentDate: string | null;
   lastSyncedAt: string;

@@ -53,6 +53,16 @@ describe('toSessionDoc — normalisation défensive à la lecture', () => {
     expect(toSessionDoc({ idAdf: '1', numeroComplet: 'ADF_1', factureMontantDepose: '800' }).factureMontantDepose).toBeNull();
   });
 
+  it('facture1/2MontantPaye : absent (doc pré-montants) → null ; 0 conservé ; non-nombre → null', () => {
+    const vieux = toSessionDoc({ idAdf: '1', numeroComplet: 'ADF_1' });
+    expect(vieux.facture1MontantPaye).toBeNull();
+    expect(vieux.facture2MontantPaye).toBeNull();
+    const s = toSessionDoc({ idAdf: '1', numeroComplet: 'ADF_1', facture1MontantPaye: 3885.5, facture2MontantPaye: 0 });
+    expect(s.facture1MontantPaye).toBe(3885.5);
+    expect(s.facture2MontantPaye).toBe(0); // facture à 0 € datée : 0, pas null
+    expect(toSessionDoc({ idAdf: '1', numeroComplet: 'ADF_1', facture1MontantPaye: '3885.5' }).facture1MontantPaye).toBeNull();
+  });
+
   it('numeroSessionDpc / numeroCompteProduit absents → null (jamais undefined)', () => {
     const s = toSessionDoc({ idAdf: '1', numeroComplet: 'ADF_1' });
     expect(s.numeroSessionDpc).toBeNull();

@@ -130,7 +130,7 @@ interface Filters {
    */
   debutYearFrom: string | null;
   /**
-   * S18 — `?blocsCheval=1`, onglet "Sessions à cheval 2026 - Auto". Ce flag fait DEUX
+   * S18 — `?blocsCheval=1`, onglet "Sessions a cheval 2026 - Auto". Ce flag fait DEUX
    * choses (ce n'est PAS un simple format d'affichage) :
    *  1. PRÉSENTATION : ajoute 3 colonnes EN FIN (Amont+cœur signés / Aval signés /
    *     Facturable année N) ;
@@ -255,7 +255,7 @@ async function buildPayload(filters: Filters, today: string, now: number): Promi
       // │ SANS blocsCheval (défaut, cockpit / janvier / onglet 25/26 FIGÉ) :    │
       // │   borne haute `dateFin <= aujourd'hui Paris` → « session TERMINÉE ».  │
       // │   Choix métier ACTÉ (ne pas noyer les commerciaux sous du futur).     │
-      // │ AVEC blocsCheval (onglet "Sessions à cheval 2026") :                  │
+      // │ AVEC blocsCheval (onglet "Sessions a cheval 2026 - Auto") :           │
       // │   « terminée » est le MAUVAIS critère — l'aval d'une session à cheval │
       // │   finit l'année suivante, donc dateFin est structurellement future.   │
       // │   Le bon critère est « la partie ANNÉE N (amont+cœur) est finie » =   │

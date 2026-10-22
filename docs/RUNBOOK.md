@@ -220,10 +220,47 @@ périmètre est fixé par les paramètres d'appel dans le script (`DEBUT_FROM`, 
   Reconfigurer le jeton dans le Sheet avec la valeur exacte de la variable `SHEET_EXPORT_TOKEN`.
 - **Une nouvelle colonne n'apparaît pas** → le script ne crée pas les colonnes tout seul : il faut
   ajouter l'en-tête **à la main** dans la 1ʳᵉ ligne (au caractère près), puis l'ajouter à la liste
-  `COLONNES_AUTO` du script, puis Actualiser.
+  `COLONNES_AUTO` du script, puis Actualiser. Procédure détaillée juste en dessous.
 - **Vérifier que l'automatique tourne** : dans l'éditeur Apps Script → icône Déclencheurs →
   onglet « Exécutions » : chaque run horaire doit être « Terminé ». Un « Échec » répété se diagnostique
   là (souvent un jeton expiré).
+
+### Ajouter une colonne automatique au Sheet (procédure manuelle)
+Le script reconnaît les colonnes **par leur en-tête** (texte de la 1ʳᵉ ligne), pas par leur
+position. Une colonne ajoutée côté outil reste donc **invisible** tant qu'on n'a pas fait ces deux
+gestes — sans rien casser entre-temps (les autres colonnes continuent de se mettre à jour).
+
+**Les 3 onglets automatiques** du Sheet principal — noms EXACTS, tels que déclarés dans son Apps
+Script (⚠ le 3ᵉ s'écrit « a » **sans accent**, contrairement au 2ᵉ) :
+```
+FEUILLE_CIBLE                = 'Janvier 2026 - Automatisation DPC'
+FEUILLE_CIBLE_CHEVAL2026     = 'Suivi des sessions à cheval 25/26 - Auto'
+FEUILLE_CIBLE_CHEVAL20262027 = 'Sessions a cheval 2026 - Auto'
+```
+Les trois sont remplis par la route `/api/export/sheet` et reçoivent les mêmes colonnes facture
+(le 3ᵉ, appelé avec `blocsCheval=1`, a en plus 3 colonnes de bloc en fin).
+
+Exemple : les colonnes **« Montant payé facture 1 »** et **« Montant payé facture 2 »** (montant
+encaissé de chaque facture d'une session à cheval).
+1. **Dans les 3 onglets ci-dessus**, sans exception, insérer deux colonnes et taper les en-têtes
+   **au caractère près** (majuscule, espaces, accents) :
+   ```
+   Montant payé facture 1
+   Montant payé facture 2
+   ```
+   - `Montant payé facture 1` — à placer juste après « Facture 1 - paiement » ;
+   - `Montant payé facture 2` — à placer juste après « Facture 2 - paiement ».
+   La position est une convention de lecture : le script retrouve la colonne où qu'elle soit,
+   **seul le texte exact compte**. Un en-tête mal orthographié = colonne jamais remplie. Un onglet
+   oublié = colonnes absentes de cet onglet seulement.
+2. **Dans le script** (Extensions → Apps Script) : ajouter ces deux textes, à l'identique, à la
+   liste `COLONNES_AUTO`, puis enregistrer. Faire de même dans la copie de référence du dépôt.
+3. Menu **Médéré → Actualiser**, puis vérifier **dans chacun des 3 onglets** une session à cheval
+   payée : un montant au format `1234,50` doit apparaître. Une cellule « - » signifie « pas de
+   montant » (session non à cheval, facture non payée, ou session pas encore resynchronisée — §8).
+
+> L'onglet **« À cheval 25/26 »** (une ligne par personne, script séparé `apps-script/Medere-Cheval.gs`,
+> route `/api/export/sheet-cheval`) n'a **pas** de colonnes facture : il n'est pas concerné.
 
 ### Où se trouve le code du Sheet
 Le script Apps Script vit **dans le Google Sheet lui-même** (Extensions → Apps Script), pas dans le
@@ -303,6 +340,11 @@ Ces règles ne concernent que le Google Sheet, pas le dashboard web.
   - **Date de paiement** = la plus récente date de paiement des factures ANDPC **payées**.
   Aucune facture ANDPC → les trois colonnes sont vides. Des factures déposées mais aucune payée →
   seule la date de dépôt est remplie.
+- **Facture 1 / Facture 2 (sessions à cheval uniquement)** = les deux premières factures ANDPC
+  **vivantes** par date d'émission : les avoirs et les factures entièrement annulées par un avoir
+  sont écartés (une demande retoquée puis refaite ne prend donc pas la place de la Facture 1).
+  **« Montant payé facture 1/2 »** = le montant encaissé de cette facture, tel que Dendreo le donne ;
+  « - » si la facture n'est ni payée ni encaissée. Détail technique : `docs/firestore-model.md`.
 - **« Hors DPC (nb) »** = le nombre de personnes non signées de la session dont le financement
   **n'est pas** l'ANDPC. Ces personnes sont **retirées** de la colonne des noms à relancer (inutile
   de les relancer) et comptées ici à la place. Une personne sans aucun financement rattaché reste,
@@ -396,6 +438,42 @@ npx tsx scripts/purge-fantomes.mjs --idAdfs=3094 --execute    # efface pour de b
 > Ses sorties sont **sans donnée nominative** (depuis S17.3c) : chaque ligne porte l'`idAdf`, la clé
 > `{idAdf}_{idParticipant}_{doctypeId}`, le doctype et le statut — de quoi auditer et retrouver la
 > personne dans Dendreo, sans qu'un copier-coller de la trace ne divulgue d'identité.
+
+### Resynchroniser les sessions à cheval après un changement de règle F1/F2
+**Quand ?** Chaque fois que la règle qui choisit la Facture 1 / Facture 2 d'une session à cheval
+change dans le code, ou qu'on ajoute un champ calculé sur ces factures (ex. les montants payés
+facture 1/2). Le nouveau calcul ne s'applique qu'aux sessions **re-synchronisées**.
+
+**Pourquoi le cron ne suffit pas.** Pour économiser les appels Dendreo, le cron nocturne **saute**
+les sessions « payées » et « anciennes » (cf. §3.2 et `src/reco/exclusion.ts`). Ces sessions
+garderaient indéfiniment l'**ancien** calcul : anciennes dates F1/F2, montants vides. Il faut donc
+les rattraper à la main, une fois, après le déploiement.
+
+Depuis le dossier du projet, **après** que le nouveau code est déployé (sinon on réécrit l'ancien
+calcul) :
+1. **Établir la liste des idAdf à rattraper.**
+   - Pour un **nouveau champ** (ex. montants payés) : **toutes** les sessions à cheval du périmètre
+     (le champ est vide partout tant que la session n'est pas repassée).
+   - Pour un **changement de règle seul** : au minimum les sessions dont le résultat change. La
+     recon `scripts/recon-montants-f1-f2.mjs` (copie locale, non versionnée) les liste dans sa
+     section « IMPACT SUR L'EXISTANT » ; à défaut, prendre toutes les sessions à cheval.
+2. **Simuler** (aucune écriture) :
+   ```
+   node --import tsx scripts/resync-session.mjs --idAdfs=3306,3248,2905 --dry-run
+   ```
+3. **Exécuter** la même commande sans `--dry-run`. Le script passe par la même fonction que le
+   webhook et **ignore l'exclusion** : chaque session listée est relue et réécrite.
+4. **Vérifier** dans le Sheet (Médéré → Actualiser) quelques sessions de la liste : dates F1/F2 et
+   montants attendus.
+
+> **Coût :** ~6 appels Dendreo par session (lecture seule) + 3 référentiels par run. Exemple :
+> ~195 sessions à cheval ≈ 1 200 appels. Le découper en plusieurs lots si besoin.
+> **Alternative exhaustive** (toutes les sessions d'une année, à cheval ou non, bien plus coûteuse) :
+> `npm run backfill -- --year 2026 --no-skip` (puis 2025) — `--no-skip` désactive l'exclusion.
+> **Journal :** pendant le resync, des lignes `[factures] ⚠ incohérence idAdf=… id_facture=…`
+> peuvent apparaître. Ce n'est pas une erreur du resync : l'outil **signale** une facture
+> incohérente dans Dendreo (voir `docs/firestore-model.md` §5) ; la correction se fait **dans
+> Dendreo**, jamais dans le miroir.
 
 ### Reconstruire entièrement le miroir (cas extrême)
 Si le miroir est corrompu, on peut le vider et le reconstruire depuis Dendreo (aucune perte : la
