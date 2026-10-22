@@ -192,8 +192,10 @@ function mapSession(s) {
     // S15 : facture 1/2 (sessions à cheval) — défauts sûrs, écrasés par enrichFinancement.
     facture1DateEnvoi: null,
     facture1DatePaiement: null,
+    facture1MontantPaye: null,
     facture2DateEnvoi: null,
     facture2DatePaiement: null,
+    facture2MontantPaye: null,
   };
 }
 

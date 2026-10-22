@@ -10,6 +10,7 @@ import {
   sumMontantAndpc,
   aggregateFacturesAndpc,
   splitFacturesAcheval,
+  detectIncoherencesFactures,
   buildFinanceurByParticipant,
   buildCommercialIdByParticipant,
   buildParcoursByParticipant,
@@ -31,7 +32,8 @@ const fac = (
   dateEmission: string | null = null,
   idFacture = '', // S15 : départage du tri quand deux factures partagent la date d'émission
   idParent: string | null = null, // avoir → id_facture de la facture annulée
-): FactureLine => ({ idFacture, idOpca, montantHt, dateEnvoi, datePaiement, dateEmission, idParent });
+  montantTotalPaiements: number | null = null, // montant encaissé (montant_total_paiements)
+): FactureLine => ({ idFacture, idOpca, montantHt, dateEnvoi, datePaiement, dateEmission, idParent, montantTotalPaiements });
 
 describe('parseMontant / toParisDay', () => {
   it('parseMontant gère virgule décimale, chaîne Dendreo et vide', () => {
@@ -267,8 +269,8 @@ describe('aggregateFacturesAndpc — montantDepose : déposées (date_envoi) vs 
 // position 1 au budget de l'année de DÉBUT, la position 2 à celui de l'année de FIN.
 describe('splitFacturesAcheval — S15', () => {
   const VIDE = {
-    facture1DateEnvoi: null, facture1DatePaiement: null,
-    facture2DateEnvoi: null, facture2DatePaiement: null,
+    facture1DateEnvoi: null, facture1DatePaiement: null, facture1MontantPaye: null,
+    facture2DateEnvoi: null, facture2DatePaiement: null, facture2MontantPaye: null,
   };
 
   it('cas réel 3246 (début 2025-07 → fin 2026-05) : F1 payée, F2 déposée non payée', () => {
@@ -276,12 +278,12 @@ describe('splitFacturesAcheval — S15', () => {
     // émise le 13/07 = budget 2026. Les DEUX sont émises en 2026 : c'est bien l'ORDRE
     // qui discrimine, jamais l'année d'émission.
     const factures = [
-      fac(ANDPC_ID, 1111.5, '2026-07-03', '2026-07-20', '2026-07-03', '4594'),
-      fac(ANDPC_ID, 4056.5, '2026-07-13', null, '2026-07-13', '4622'),
+      fac(ANDPC_ID, 1111.5, '2026-07-03', '2026-07-20', '2026-07-03', '4594', null, 1111.5),
+      fac(ANDPC_ID, 4056.5, '2026-07-13', null, '2026-07-13', '4622', null, 0),
     ];
     expect(splitFacturesAcheval(factures, true)).toEqual({
-      facture1DateEnvoi: '2026-07-03', facture1DatePaiement: '2026-07-20',
-      facture2DateEnvoi: '2026-07-13', facture2DatePaiement: null,
+      facture1DateEnvoi: '2026-07-03', facture1DatePaiement: '2026-07-20', facture1MontantPaye: 1111.5,
+      facture2DateEnvoi: '2026-07-13', facture2DatePaiement: null, facture2MontantPaye: null,
     });
   });
 
@@ -297,12 +299,12 @@ describe('splitFacturesAcheval — S15', () => {
     // FA-2025-1133 (id 3771) émise 10/12/2025, date_envoi VIDE, payée le 22/12/2025 ;
     // FA-2026-0851 (id 4679) émise+envoyée le 29/07/2026, non payée.
     const factures = [
-      fac(ANDPC_ID, 16837.2, null, '2025-12-22', '2025-12-10', '3771'),
-      fac(ANDPC_ID, 4542.2, '2026-07-29', null, '2026-07-29', '4679'),
+      fac(ANDPC_ID, 16837.2, null, '2025-12-22', '2025-12-10', '3771', null, 16837.2),
+      fac(ANDPC_ID, 4542.2, '2026-07-29', null, '2026-07-29', '4679', null, 0),
     ];
     expect(splitFacturesAcheval(factures, true)).toEqual({
-      facture1DateEnvoi: null, facture1DatePaiement: '2025-12-22',
-      facture2DateEnvoi: '2026-07-29', facture2DatePaiement: null,
+      facture1DateEnvoi: null, facture1DatePaiement: '2025-12-22', facture1MontantPaye: 16837.2,
+      facture2DateEnvoi: '2026-07-29', facture2DatePaiement: null, facture2MontantPaye: null,
     });
   });
 
@@ -315,10 +317,10 @@ describe('splitFacturesAcheval — S15', () => {
   });
 
   it('à cheval avec UNE SEULE facture ANDPC → F1 remplie, F2 null (on n\'invente pas)', () => {
-    const r = splitFacturesAcheval([fac(ANDPC_ID, 1111.5, '2026-07-03', '2026-07-20', '2026-07-03', '4594')], true);
+    const r = splitFacturesAcheval([fac(ANDPC_ID, 1111.5, '2026-07-03', '2026-07-20', '2026-07-03', '4594', null, 1111.5)], true);
     expect(r).toEqual({
-      facture1DateEnvoi: '2026-07-03', facture1DatePaiement: '2026-07-20',
-      facture2DateEnvoi: null, facture2DatePaiement: null,
+      facture1DateEnvoi: '2026-07-03', facture1DatePaiement: '2026-07-20', facture1MontantPaye: 1111.5,
+      facture2DateEnvoi: null, facture2DatePaiement: null, facture2MontantPaye: null,
     });
   });
 
@@ -385,6 +387,205 @@ describe('splitFacturesAcheval — S15', () => {
   });
 });
 
+// --- Règle C : avoirs et factures ENTIÈREMENT annulées hors slots + montants payés --
+// Schémas RÉELS (recon-montants-f1-f2 + recon-paiements, 724 sessions 2025-2026) :
+// une facture annulée et son avoir sont datés du même jour, montant_total_paiements = 0
+// (compensation Dendreo, sans encaissement) ; les vivantes ont paiements == HT.
+describe('splitFacturesAcheval — règle C (vivantes) + montants payés', () => {
+  /** Facture ANDPC : (id, HT, émission, envoi, paiement, encaissé, id_parent). */
+  const f = (
+    idFacture: string, montantHt: number, dateEmission: string, dateEnvoi: string | null,
+    datePaiement: string | null, montantTotalPaiements: number | null, idParent: string | null = null,
+  ) => fac(ANDPC_ID, montantHt, dateEnvoi, datePaiement, dateEmission, idFacture, idParent, montantTotalPaiements);
+  const VIDE_C = {
+    facture1DateEnvoi: null, facture1DatePaiement: null, facture1MontantPaye: null,
+    facture2DateEnvoi: null, facture2DatePaiement: null, facture2MontantPaye: null,
+  };
+
+  it('schéma 3306 : F1 retoquée + avoir + F1 refaite + F2 → F1 = refaite, F2 = vraie F2', () => {
+    const r = splitFacturesAcheval([
+      f('4503', 4123, '2026-06-10', '2026-06-10', '2026-06-18', 0),           // retoquée, annulée par 4541
+      f('4541', -4123, '2026-06-18', null, '2026-06-18', 0, '4503'),          // avoir total
+      f('4542', 3885.5, '2026-06-18', '2026-06-18', '2026-06-29', 3885.5),    // F1 refaite
+      f('4788', 1729, '2026-09-04', '2026-09-04', '2026-09-17', 1729),        // vraie F2
+    ], true);
+    expect(r).toEqual({
+      facture1DateEnvoi: '2026-06-18', facture1DatePaiement: '2026-06-29', facture1MontantPaye: 3885.5,
+      facture2DateEnvoi: '2026-09-04', facture2DatePaiement: '2026-09-17', facture2MontantPaye: 1729,
+    });
+  });
+
+  it('schéma 3248 : trois factures annulées chacune par un avoir + une vivante → F1 = vivante, F2 = null', () => {
+    const annulees = [
+      f('4779', 2840.5, '2026-09-03', '2026-09-04', '2026-09-08', 0),
+      f('4803', -2840.5, '2026-09-08', null, '2026-09-08', 0, '4779'),
+      f('4804', 2840.5, '2026-09-08', '2026-09-08', '2026-09-14', 0),
+      f('4837', -2840.5, '2026-09-14', null, '2026-09-14', 0, '4804'),
+      f('4838', 2840.5, '2026-09-14', null, '2026-10-08', 0),
+      f('5021', -2840.5, '2026-10-08', null, '2026-10-08', 0, '4838'),
+    ];
+    // Réel : la vivante 5022 n'est ni envoyée ni payée → F1 vide, et SURTOUT pas les dates
+    // de 4779 (ancienne règle : F1 = 4779 envoi 04/09 paiement 08/09, F2 = l'avoir 4803).
+    expect(splitFacturesAcheval([...annulees, f('5022', 2840.5, '2026-10-08', null, null, 0)], true)).toEqual(VIDE_C);
+    // Même schéma, 5022 envoyée + payée : ce sont SES dates/montant qui sortent en F1.
+    expect(splitFacturesAcheval([...annulees, f('5022', 2840.5, '2026-10-08', '2026-10-09', '2026-10-20', 2840.5)], true))
+      .toEqual({ ...VIDE_C, facture1DateEnvoi: '2026-10-09', facture1DatePaiement: '2026-10-20', facture1MontantPaye: 2840.5 });
+  });
+
+  it('schéma 2905 : avoir sur UNE seule des factures → elle sort, les 2 autres font F1/F2', () => {
+    const r = splitFacturesAcheval([
+      f('3265', 2244, '2025-09-17', null, '2025-10-23', 2244),
+      f('4545', 171.6, '2026-06-19', null, '2026-06-19', 0),                  // annulée par 4546
+      f('4546', -171.6, '2026-06-19', null, '2026-06-19', 0, '4545'),
+      f('4547', 858, '2026-06-19', '2026-07-08', '2026-07-20', 858),
+    ], true);
+    expect(r).toEqual({
+      facture1DateEnvoi: null, facture1DatePaiement: '2025-10-23', facture1MontantPaye: 2244,
+      facture2DateEnvoi: '2026-07-08', facture2DatePaiement: '2026-07-20', facture2MontantPaye: 858,
+    });
+  });
+
+  it('facture à 0 € DATÉE → montant payé 0 (reflet fidèle de Dendreo, pas null)', () => {
+    const r = splitFacturesAcheval([f('4597', 0, '2026-07-03', null, '2026-07-03', 0)], true);
+    expect(r.facture1DatePaiement).toBe('2026-07-03');
+    expect(r.facture1MontantPaye).toBe(0);
+  });
+
+  it('facture NON payée (ni date, ni encaissement) → montant null, date null', () => {
+    const r = splitFacturesAcheval([f('1', 1000, '2026-03-01', '2026-03-02', null, 0)], true);
+    expect(r.facture1DateEnvoi).toBe('2026-03-02');
+    expect(r.facture1DatePaiement).toBeNull();
+    expect(r.facture1MontantPaye).toBeNull();
+  });
+
+  it('montant_total_paiements ABSENT (champ vide) → montant null même si datée (on ne devine pas)', () => {
+    const r = splitFacturesAcheval([f('1', 1000, '2026-03-01', null, '2026-03-10', null)], true);
+    expect(r.facture1DatePaiement).toBe('2026-03-10');
+    expect(r.facture1MontantPaye).toBeNull();
+  });
+
+  it('avoir PARTIEL → la parente reste VIVANTE, montant = encaissé brut (aucun net inventé) + signalement', () => {
+    const factures = [
+      f('A', 1000, '2026-02-01', '2026-02-01', '2026-02-20', 1000),
+      f('B', -400, '2026-02-10', null, '2026-02-10', 0, 'A'),                 // partiel : −400 ≠ −1000
+      f('C', 500, '2026-03-01', '2026-03-01', null, 0),
+    ];
+    const r = splitFacturesAcheval(factures, true);
+    expect(r.facture1DatePaiement).toBe('2026-02-20'); // A reste F1
+    expect(r.facture1MontantPaye).toBe(1000); // PAS 600 : aucun calcul de net
+    expect(r.facture2DateEnvoi).toBe('2026-03-01'); // l'avoir B ne prend jamais de slot
+    expect(detectIncoherencesFactures(factures)).toEqual([
+      { idFacture: 'A', motif: 'avoir partiel : Σ avoirs -400 (B) ≠ −HT -1000' },
+    ]);
+  });
+
+  it('encaissement SANS date_paiement → montant affiché + signalement', () => {
+    const factures = [f('1', 345, '2026-05-01', null, null, 345)];
+    expect(splitFacturesAcheval(factures, true)).toMatchObject({ facture1DatePaiement: null, facture1MontantPaye: 345 });
+    expect(detectIncoherencesFactures(factures)).toEqual([{ idFacture: '1', motif: 'encaissement 345 sans date_paiement' }]);
+  });
+
+  it('session NON à cheval → les 4 dates et les 2 montants null, même avec des factures payées', () => {
+    const r = splitFacturesAcheval([
+      f('1', 1000, '2026-01-01', '2026-01-02', '2026-01-10', 1000),
+      f('2', 500, '2026-02-01', '2026-02-02', '2026-02-10', 500),
+    ], false);
+    expect(r).toEqual(VIDE_C);
+  });
+
+  it('seulement des factures annulées + leurs avoirs → 6 null (aucune vivante)', () => {
+    expect(splitFacturesAcheval([
+      f('1', 1000, '2026-01-01', null, '2026-01-10', 0),
+      f('2', -1000, '2026-01-10', null, '2026-01-10', 0, '1'),
+    ], true)).toEqual(VIDE_C);
+  });
+
+  it("une facture à 0 € SANS avoir n'est pas « annulée » : elle reste vivante", () => {
+    const r = splitFacturesAcheval([f('1', 0, '2026-01-01', null, '2026-01-05', 0), f('2', 800, '2026-02-01', null, null, 0)], true);
+    expect(r.facture1DatePaiement).toBe('2026-01-05');
+    expect(r.facture1MontantPaye).toBe(0);
+  });
+
+  it("annulation par PLUSIEURS avoirs dont la somme == −HT → annulée (sortie des slots)", () => {
+    const r = splitFacturesAcheval([
+      f('1', 1000, '2026-01-01', null, '2026-01-10', 0),
+      f('2', -600, '2026-01-10', null, '2026-01-10', 0, '1'),
+      f('3', -400, '2026-01-10', null, '2026-01-10', 0, '1'),
+      f('4', 750, '2026-02-01', '2026-02-01', '2026-02-15', 750),
+    ], true);
+    expect(r.facture1MontantPaye).toBe(750);
+    expect(r.facture2DateEnvoi).toBeNull();
+  });
+});
+
+describe('detectIncoherencesFactures — log seul, aucune correction', () => {
+  const f = (
+    idFacture: string, montantHt: number, datePaiement: string | null,
+    montantTotalPaiements: number | null, idParent: string | null = null, idOpca = ANDPC_ID,
+  ) => fac(idOpca, montantHt, null, datePaiement, '2026-01-01', idFacture, idParent, montantTotalPaiements);
+
+  it('paires « facture entièrement annulée + avoir » (compensation) → NORMALES, rien signalé', () => {
+    expect(detectIncoherencesFactures([
+      f('4503', 4123, '2026-06-18', 0),
+      f('4541', -4123, '2026-06-18', 0, '4503'),
+      f('4542', 3885.5, '2026-06-29', 3885.5),
+    ])).toEqual([]);
+  });
+
+  it('facture vivante DATÉE sans encaissement (paiements 0, HT ≠ 0) → signalée', () => {
+    expect(detectIncoherencesFactures([f('9', 500, '2026-03-01', 0)])).toEqual([
+      { idFacture: '9', motif: 'datée 2026-03-01 sans encaissement (montant_total_paiements 0, HT 500)' },
+    ]);
+  });
+
+  it('facture à 0 € datée sans encaissement → NON signalée (0 payé sur 0 dû)', () => {
+    expect(detectIncoherencesFactures([f('4597', 0, '2026-07-03', 0)])).toEqual([]);
+  });
+
+  it('cas réel 3864 : avoir 4430 sans date_paiement ET encaissé → 2 signalements', () => {
+    expect(detectIncoherencesFactures([
+      f('4429', 345, '2026-05-29', 345),
+      f('4430', -345, null, 345, '4429'),
+    ])).toEqual([
+      { idFacture: '4430', motif: 'avoir sans date_paiement (parente 4429)' },
+      { idFacture: '4430', motif: 'encaissement 345 sans date_paiement' },
+    ]);
+  });
+
+  it('avoir orphelin : id_parent vide → signalé', () => {
+    expect(detectIncoherencesFactures([f('1', 500, '2026-03-01', 500), f('2', -500, '2026-03-05', 0, null)])).toEqual([
+      { idFacture: '2', motif: 'avoir orphelin : id_parent vide' },
+    ]);
+  });
+
+  it('avoir orphelin : parente introuvable parmi les ANDPC (absente, ou facture NON-ANDPC) → signalé', () => {
+    expect(detectIncoherencesFactures([
+      f('1', 500, '2026-03-01', 500),
+      f('2', -500, '2026-03-05', 0, 'ZZZ'),          // parente absente de la session
+      f('3', 999, '2026-03-01', 999, null, '2669'),  // facture d'un autre financeur
+      f('4', -999, '2026-03-05', 0, '3'),            // avoir ANDPC qui la cite → orphelin côté ANDPC
+    ])).toEqual([
+      { idFacture: '2', motif: 'avoir orphelin : parente ZZZ introuvable parmi les factures ANDPC' },
+      { idFacture: '4', motif: 'avoir orphelin : parente 3 introuvable parmi les factures ANDPC' },
+    ]);
+  });
+
+  it('avoir orphelin ET sans date_paiement → les 2 signalements', () => {
+    expect(detectIncoherencesFactures([f('2', -500, null, 0, null)])).toEqual([
+      { idFacture: '2', motif: 'avoir orphelin : id_parent vide' },
+      { idFacture: '2', motif: 'avoir sans date_paiement (parente vide)' },
+    ]);
+  });
+
+  it('montant_total_paiements absent (null) → jamais signalé (on ne sait pas)', () => {
+    expect(detectIncoherencesFactures([f('1', 500, '2026-03-01', null), f('2', 500, null, null)])).toEqual([]);
+  });
+
+  it('factures NON-ANDPC ignorées', () => {
+    expect(detectIncoherencesFactures([f('1', 500, '2026-03-01', 0, null, '2669')])).toEqual([]);
+  });
+});
+
 describe('buildFinanceurByParticipant (chaîne idParticipant → id_entreprise → financeur)', () => {
   const laps: LapLink[] = [
     { idParticipant: 'p1', idEntreprise: 'e1', commercialId: '', presence: 'OUI', firstLamInscritId: '6020' }, // ANDPC
@@ -418,7 +619,7 @@ describe('enrichFinancement — résilience (échec d\'une lecture)', () => {
     { id_finance: 'e2', id_financeur: '449369', type: 'particulier', montant_finance: '300.00' },
   ];
   const FACTURES = [
-    { id_opca: ANDPC_ID, date_envoi: '2026-05-11 00:00:00', montant_total_ht: '800.00', date_paiement: '2026-05-20 00:00:00', date_emission: '2026-05-11 00:00:00' },
+    { id_facture: '700', id_opca: ANDPC_ID, date_envoi: '2026-05-11 00:00:00', montant_total_ht: '800.00', date_paiement: '2026-05-20 00:00:00', date_emission: '2026-05-11 00:00:00', montant_total_paiements: '800.00' },
   ];
   const LAPS = [
     // ANDPC + commercial 48 (réel S13.0) + a suivi jusqu'au bout (S14)
@@ -428,23 +629,25 @@ describe('enrichFinancement — résilience (échec d\'une lecture)', () => {
   ];
   const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200 });
 
-  function makeClient(fail: Set<string>): DendreoClient {
+  function makeClient(fail: Set<string>, factures: unknown[] = FACTURES): DendreoClient {
     const fetchImpl = vi.fn(async (url: string) => {
       const hit = (res: string) => url.includes(res);
       if (hit('financements.php')) return fail.has('financements') ? new Response('err', { status: 500 }) : json(FINANCEMENTS);
-      if (hit('factures.php')) return fail.has('factures') ? new Response('err', { status: 500 }) : json(FACTURES);
+      if (hit('factures.php')) return fail.has('factures') ? new Response('err', { status: 500 }) : json(factures);
       if (hit('laps.php')) return fail.has('laps') ? new Response('err', { status: 500 }) : json(LAPS);
       return json([]);
     });
     return new DendreoClient({ baseUrl: 'https://x/api', apiKey: 'SECRET', fetchImpl, sleep: async () => {} });
   }
 
-  it('tout OK, session NON à cheval → valeurs remplies, les 4 champs S15 null', async () => {
+  it('tout OK, session NON à cheval → valeurs remplies, les 6 champs S15 null', async () => {
     const r = await enrichFinancement('A1', makeClient(new Set()), false);
     expect(r.session).toEqual({
       financeurAndpc: true, montantAndpc: 500, factureDateEnvoi: '2026-05-11', factureMontantHt: 800, factureDatePaiement: '2026-05-20', factureMontantDepose: 800,
-      facture1DateEnvoi: null, facture1DatePaiement: null, facture2DateEnvoi: null, facture2DatePaiement: null,
+      facture1DateEnvoi: null, facture1DatePaiement: null, facture1MontantPaye: null,
+      facture2DateEnvoi: null, facture2DatePaiement: null, facture2MontantPaye: null,
     });
+    expect(r.incoherencesFactures).toEqual([]);
     expect(r.financeurByParticipant.get('p1')).toBe(true);
     expect(r.financeurByParticipant.get('p2')).toBe(false);
     // S13.1 : commercial_id extrait des MÊMES laps (coût 0). p2 sans commercial_id → absent.
@@ -460,11 +663,29 @@ describe('enrichFinancement — résilience (échec d\'une lecture)', () => {
     const r = await enrichFinancement('A2', makeClient(new Set(['factures'])), true); // même à cheval
     expect(r.session).toEqual({
       financeurAndpc: true, montantAndpc: 500, factureDateEnvoi: null, factureMontantHt: null, factureDatePaiement: null, factureMontantDepose: null,
-      // S15 : lecture factures KO → les 4 champs null, la session n'est JAMAIS perdue.
-      facture1DateEnvoi: null, facture1DatePaiement: null, facture2DateEnvoi: null, facture2DatePaiement: null,
+      // S15 : lecture factures KO → les 6 champs null, la session n'est JAMAIS perdue.
+      facture1DateEnvoi: null, facture1DatePaiement: null, facture1MontantPaye: null,
+      facture2DateEnvoi: null, facture2DatePaiement: null, facture2MontantPaye: null,
     });
     expect(r.financeurByParticipant.get('p1')).toBe(true); // classification préservée
     expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it('à cheval : montant_total_paiements lu dans la MÊME réponse factures.php → facture1MontantPaye', async () => {
+    const r = await enrichFinancement('A5', makeClient(new Set()), true);
+    expect(r.session).toMatchObject({ facture1DatePaiement: '2026-05-20', facture1MontantPaye: 800, facture2MontantPaye: null });
+  });
+
+  it('incohérence facture → console.warn avec idAdf + id_facture, valeurs NON corrigées', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const r = await enrichFinancement('3864', makeClient(new Set(), [
+      { id_facture: '4429', id_opca: ANDPC_ID, montant_total_ht: '345.00', date_paiement: '2026-05-29 00:00:00', date_emission: '2026-05-01 00:00:00', montant_total_paiements: '345.00' },
+      { id_facture: '4430', id_opca: ANDPC_ID, montant_total_ht: '-345.00', date_paiement: '', date_emission: '2026-06-01 00:00:00', montant_total_paiements: '345.00', id_parent: '4429' },
+    ]), false);
+    expect(r.incoherencesFactures.map((i) => i.idFacture)).toEqual(['4430', '4430']);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('idAdf=3864 id_facture=4430'));
+    expect(r.session.factureMontantHt).toBe(345); // agrégat INCHANGÉ (aucune correction)
     warn.mockRestore();
   });
 

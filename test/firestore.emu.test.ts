@@ -52,8 +52,10 @@ const session = (idAdf: string): SessionUpsertInput => ({
   factureMontantDepose: null,
   facture1DateEnvoi: null,
   facture1DatePaiement: null,
+  facture1MontantPaye: null,
   facture2DateEnvoi: null,
   facture2DatePaiement: null,
+  facture2MontantPaye: null,
 });
 
 const sig = (idAdf: string, idParticipant: string, over: Partial<SignatureUpsertInput>): SignatureUpsertInput => ({

@@ -6,7 +6,8 @@
 //
 // Endpoints & champs PROUVÉS sur données réelles (recons S11.0a→g) :
 //   financements.php?id_action_de_formation → { id_finance, id_financeur, type, montant_finance }
-//   factures.php?id_action_de_formation     → { id_opca, date_envoi, montant_total_ht, date_paiement, date_emission }
+//   factures.php?id_action_de_formation     → { id_opca, date_envoi, montant_total_ht, date_paiement, date_emission,
+//                                               id_parent, montant_total_paiements }
 //   laps.php?id_action_de_formation         → { id_participant, id_entreprise }  (champs natifs, sans include)
 //   financeurs.php?id=360                   → raison_sociale "ANDPC"
 //
@@ -38,6 +39,7 @@ export interface FactureLine {
   datePaiement: string | null;
   dateEmission: string | null; // S15 : porte l'ORDRE des factures (cf. splitFacturesAcheval)
   idParent: string | null; // sur un AVOIR : id_facture de la facture qu'il annule ; vide/"0" → null
+  montantTotalPaiements: number | null; // montant_total_paiements (encaissé) ; vide/absent → null (≠ 0)
 }
 
 /** Un lien inscription minimal (laps.php). */
@@ -149,23 +151,70 @@ export function aggregateFacturesAndpc(factures: readonly FactureLine[]): {
 
 // --- S15 : FACTURE 1 / FACTURE 2 des sessions À CHEVAL -----------------------
 
-/** Les 4 champs S15. Tous null hors session à cheval (ou sans facture ANDPC). */
+/** Les 6 champs S15. Tous null hors session à cheval (ou sans facture ANDPC vivante). */
 export interface FacturesAchevalSplit {
   facture1DateEnvoi: string | null;
   facture1DatePaiement: string | null;
+  facture1MontantPaye: number | null;
   facture2DateEnvoi: string | null;
   facture2DatePaiement: string | null;
+  facture2MontantPaye: number | null;
 }
 
 const SPLIT_VIDE: FacturesAchevalSplit = {
   facture1DateEnvoi: null,
   facture1DatePaiement: null,
+  facture1MontantPaye: null,
   facture2DateEnvoi: null,
   facture2DatePaiement: null,
+  facture2MontantPaye: null,
 };
 
 /** "" ⇄ null : une date vide n'est jamais une date (même règle que l'agrégation). */
 const orNull = (d: string | null): string | null => (d === null || d === '' ? null : d);
+
+/** Égalité de montants au centime (les HT Dendreo sont des décimaux parsés). */
+const memeMontant = (a: number, b: number): boolean => Math.abs(a - b) < 0.005;
+
+/** Avoir = facture HT < 0 (marqueur prouvé, recon 200 sessions : 17/17). */
+const estAvoir = (f: FactureLine): boolean => f.montantHt !== null && f.montantHt < 0;
+
+/** id_facture parente → avoirs ANDPC qui la citent en id_parent. */
+function avoirsParParente(andpc: readonly FactureLine[]): Map<string, FactureLine[]> {
+  const out = new Map<string, FactureLine[]>();
+  for (const a of andpc) {
+    if (!estAvoir(a) || a.idParent === null) continue;
+    const arr = out.get(a.idParent) ?? [];
+    arr.push(a);
+    out.set(a.idParent, arr);
+  }
+  return out;
+}
+
+const sommeHt = (fs: readonly FactureLine[]): number => fs.reduce((acc, f) => acc + (f.montantHt ?? 0), 0);
+
+/**
+ * Facture ENTIÈREMENT annulée = Σ HT des avoirs qui la citent en id_parent == −HT.
+ * Il faut AU MOINS un avoir : une facture à 0 € sans avoir n'est pas « annulée ».
+ * Prouvé (recon 724 sessions 2025-2026) : Dendreo solde ces paires par compensation
+ * (facture et avoir datés du même jour, montant_total_paiements = 0, sans encaissement).
+ */
+function estAnnuleeTotalement(f: FactureLine, avoirs: readonly FactureLine[]): boolean {
+  return avoirs.length > 0 && f.montantHt !== null && memeMontant(sommeHt(avoirs), -f.montantHt);
+}
+
+/**
+ * Montant payé d'une facture de slot = montant_total_paiements, tel que Dendreo le donne.
+ * null si le champ est absent, ou si la facture n'est NI datée NI encaissée (rien à afficher).
+ * Une facture à 0 € datée → 0 (reflet fidèle). Les incohérences (datée sans encaissement,
+ * encaissée sans date) sont AFFICHÉES telles quelles et signalées par detectIncoherencesFactures.
+ */
+function montantPaye(f: FactureLine): number | null {
+  const p = f.montantTotalPaiements;
+  if (p === null) return null;
+  if (orNull(f.datePaiement) === null && memeMontant(p, 0)) return null;
+  return p;
+}
 
 /**
  * Ordre des factures ANDPC d'une session à cheval : `date_emission` CROISSANTE,
@@ -199,15 +248,21 @@ function compareFactures(a: FactureLine, b: FactureLine): number {
  * `date_envoi` n'est PAS discriminante (une facture 2025 peut être envoyée en 2026
  * si des PS signent en retard) et peut même être vide sur une facture payée (3328).
  *
+ * Seules les factures ANDPC « VIVANTES » prennent un slot (règle C, prouvée sur les
+ * 724 sessions 2025-2026) : on écarte les AVOIRS (HT < 0) ET les factures ENTIÈREMENT
+ * annulées par leurs avoirs (cas 3306 : F1 retoquée + avoir + F1 refaite → la refaite
+ * est F1). Un avoir PARTIEL laisse sa parente vivante, sans calcul de net (signalé).
+ *
  * Périmètre STRICT :
- *  - session NON à cheval → les 4 champs null (l'agrégat existant reste seul en place) ;
- *  - à cheval, 0 facture ANDPC → 4 null ;
- *  - à cheval, 1 seule facture ANDPC → Facture 1 remplie, Facture 2 null (garde-fou :
+ *  - session NON à cheval → les 6 champs null (l'agrégat existant reste seul en place) ;
+ *  - à cheval, 0 facture ANDPC vivante → 6 null ;
+ *  - à cheval, 1 seule vivante → Facture 1 remplie, Facture 2 null (garde-fou :
  *    on ne fabrique JAMAIS une 2e facture) ;
- *  - à cheval, > 2 factures ANDPC → seules les 2 premières alimentent les colonnes
+ *  - à cheval, > 2 vivantes → seules les 2 premières alimentent les colonnes
  *    (les suivantes restent dans l'agrégat `factureDateEnvoi`/`factureMontantHt`).
  *
- * N'AFFECTE PAS `factureMontantHt` (montant payé), inchangé par ce sprint.
+ * Montant payé du slot = montant_total_paiements de sa facture (cf. montantPaye).
+ * N'AFFECTE PAS l'agrégat (`factureMontantHt`, `factureMontantDepose`).
  */
 export function splitFacturesAcheval(
   factures: readonly FactureLine[],
@@ -215,15 +270,71 @@ export function splitFacturesAcheval(
 ): FacturesAchevalSplit {
   if (!aCheval) return { ...SPLIT_VIDE };
   const andpc = factures.filter((f) => f.idOpca === ANDPC_ID);
-  if (andpc.length === 0) return { ...SPLIT_VIDE };
+  const avoirs = avoirsParParente(andpc);
+  const vivantes = andpc.filter((f) => !estAvoir(f) && !estAnnuleeTotalement(f, avoirs.get(f.idFacture) ?? []));
+  if (vivantes.length === 0) return { ...SPLIT_VIDE };
 
-  const [f1, f2] = [...andpc].sort(compareFactures);
+  const [f1, f2] = [...vivantes].sort(compareFactures);
   return {
     facture1DateEnvoi: f1 ? orNull(f1.dateEnvoi) : null,
     facture1DatePaiement: f1 ? orNull(f1.datePaiement) : null,
+    facture1MontantPaye: f1 ? montantPaye(f1) : null,
     facture2DateEnvoi: f2 ? orNull(f2.dateEnvoi) : null,
     facture2DatePaiement: f2 ? orNull(f2.datePaiement) : null,
+    facture2MontantPaye: f2 ? montantPaye(f2) : null,
   };
+}
+
+/** Une incohérence facture détectée (log uniquement, AUCUNE correction). */
+export interface IncoherenceFacture {
+  idFacture: string;
+  motif: string;
+}
+
+/**
+ * Contrôle d'incohérence des factures ANDPC d'une session (toutes sessions, à cheval
+ * ou non). PURE : renvoie la liste, l'appelant la logge. Aucune donnée n'est corrigée.
+ * Signalé :
+ *  - facture vivante datée (date_paiement) avec montant_total_paiements = 0 et HT ≠ 0 ;
+ *  - montant_total_paiements ≠ 0 sans date_paiement ;
+ *  - avoir partiel : Σ HT des avoirs ≠ −HT de la parente ;
+ *  - avoir sans date_paiement ;
+ *  - avoir orphelin : id_parent vide, ou parente introuvable parmi les factures ANDPC de la session.
+ * Les paires « facture entièrement annulée + avoir » sont NORMALES (compensation Dendreo).
+ * Un montant_total_paiements absent (null) n'est jamais signalé : on ne sait pas.
+ */
+export function detectIncoherencesFactures(factures: readonly FactureLine[]): IncoherenceFacture[] {
+  const andpc = factures.filter((f) => f.idOpca === ANDPC_ID);
+  const avoirs = avoirsParParente(andpc);
+  const idsAndpc = new Set(andpc.map((f) => f.idFacture));
+  const out: IncoherenceFacture[] = [];
+  for (const f of andpc) {
+    const datee = orNull(f.datePaiement) !== null;
+    const p = f.montantTotalPaiements;
+    if (estAvoir(f)) {
+      if (f.idParent === null) out.push({ idFacture: f.idFacture, motif: 'avoir orphelin : id_parent vide' });
+      else if (!idsAndpc.has(f.idParent)) {
+        out.push({ idFacture: f.idFacture, motif: `avoir orphelin : parente ${f.idParent} introuvable parmi les factures ANDPC` });
+      }
+      if (!datee) out.push({ idFacture: f.idFacture, motif: `avoir sans date_paiement (parente ${f.idParent ?? 'vide'})` });
+    } else {
+      const sesAvoirs = avoirs.get(f.idFacture) ?? [];
+      if (sesAvoirs.length > 0 && !estAnnuleeTotalement(f, sesAvoirs)) {
+        out.push({
+          idFacture: f.idFacture,
+          motif: `avoir partiel : Σ avoirs ${round2(sommeHt(sesAvoirs))} (${sesAvoirs.map((a) => a.idFacture).join('+')}) ≠ −HT ${round2(-(f.montantHt ?? 0))}`,
+        });
+      }
+      const vivante = !estAnnuleeTotalement(f, sesAvoirs);
+      if (vivante && datee && p !== null && memeMontant(p, 0) && f.montantHt !== null && !memeMontant(f.montantHt, 0)) {
+        out.push({ idFacture: f.idFacture, motif: `datée ${f.datePaiement} sans encaissement (montant_total_paiements 0, HT ${f.montantHt})` });
+      }
+    }
+    if (!datee && p !== null && !memeMontant(p, 0)) {
+      out.push({ idFacture: f.idFacture, motif: `encaissement ${p} sans date_paiement` });
+    }
+  }
+  return out;
 }
 
 /**
@@ -318,18 +429,18 @@ async function readFinancements(id: string, client: DendreoClient): Promise<Fina
 async function readFactures(id: string, client: DendreoClient): Promise<FactureLine[]> {
   try {
     const raw = asArray<Record<string, unknown>>(await client.get('factures.php', { id_action_de_formation: id }));
+    const montantOuNull = (v: unknown): number | null => (v == null || String(v).trim() === '' ? null : parseMontant(v));
     return raw.map((f) => {
-      const htRaw = f.montant_total_ht;
-      const ht = htRaw == null || String(htRaw).trim() === '' ? null : parseMontant(htRaw);
       const parentRaw = String(f.id_parent ?? '').trim();
       return {
         idFacture: String(f.id_facture ?? ''),
         idOpca: String(f.id_opca ?? ''),
         dateEnvoi: toParisDay(f.date_envoi),
-        montantHt: ht,
+        montantHt: montantOuNull(f.montant_total_ht),
         datePaiement: toParisDay(f.date_paiement),
         dateEmission: toParisDay(f.date_emission),
         idParent: parentRaw === '' || parentRaw === '0' ? null : parentRaw, // même réponse, 0 appel ajouté
+        montantTotalPaiements: montantOuNull(f.montant_total_paiements), // idem, 0 appel ajouté
       };
     });
   } catch (err) {
@@ -368,9 +479,13 @@ export interface FinancementEnrichment {
     // S15 — peuplés UNIQUEMENT si la session est à cheval (sinon null, cf. splitFacturesAcheval).
     facture1DateEnvoi: string | null;
     facture1DatePaiement: string | null;
+    facture1MontantPaye: number | null;
     facture2DateEnvoi: string | null;
     facture2DatePaiement: string | null;
+    facture2MontantPaye: number | null;
   };
+  /** Incohérences factures ANDPC (déjà loggées par enrichFinancement ; aucune correction). */
+  incoherencesFactures: IncoherenceFacture[];
   /** idParticipant → financeurAndpc (true|false|null) pour chaque SignatureDoc. */
   financeurByParticipant: Map<string, boolean | null>;
   /** idParticipant → commercial_id de l'inscription (S13.1) ; à résoudre en NOM via le référentiel. */
@@ -387,6 +502,9 @@ export interface FinancementEnrichment {
  * `aCheval` vient de l'appelant (déjà calculé par `isACheval(dateDebut, dateFin)`,
  * sync ET backfill) : le split S15 n'ajoute AUCUNE lecture Dendreo — il rejoue les
  * factures déjà lues ici.
+ *
+ * Contrôle d'incohérence des factures (detectIncoherencesFactures) : loggé ICI, donc
+ * dans sync ET backfill (même fonction), avec idAdf + id_facture. Log seul, rien corrigé.
  */
 export async function enrichFinancement(
   idAdf: string | number,
@@ -397,6 +515,11 @@ export async function enrichFinancement(
   const lines = await readFinancements(id, client);
   const factures = await readFactures(id, client);
   const laps = await readLaps(id, client);
+
+  const incoherencesFactures = detectIncoherencesFactures(factures);
+  for (const i of incoherencesFactures) {
+    console.warn(`[factures] ⚠ incohérence idAdf=${id} id_facture=${i.idFacture} : ${i.motif}`);
+  }
 
   const agg = aggregateFacturesAndpc(factures);
   return {
@@ -409,6 +532,7 @@ export async function enrichFinancement(
       factureMontantDepose: agg.montantDepose,
       ...splitFacturesAcheval(factures, aCheval), // S15 — 0 lecture ajoutée
     },
+    incoherencesFactures,
     financeurByParticipant: buildFinanceurByParticipant(laps, lines),
     commercialIdByParticipant: buildCommercialIdByParticipant(laps),
     parcoursByParticipant: buildParcoursByParticipant(laps),
