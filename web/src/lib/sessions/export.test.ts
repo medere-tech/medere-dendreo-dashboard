@@ -45,7 +45,8 @@ function session(over: Partial<SessionDoc> = {}): SessionDoc {
     format: 'Mixte', aCheval: false, facturableAnneeN: false, eppAmontConnecte: false, eppAvalConnecte: false, eligibleDpc: true, aEpp: true,
     datesSynchrones: [],
     financeurAndpc: false, montantAndpc: null, factureDateEnvoi: null, factureMontantHt: null, factureDatePaiement: null, factureMontantDepose: null,
-    facture1DateEnvoi: null, facture1DatePaiement: null, facture2DateEnvoi: null, facture2DatePaiement: null,
+    facture1DateEnvoi: null, facture1DatePaiement: null, facture1MontantPaye: null,
+    facture2DateEnvoi: null, facture2DatePaiement: null, facture2MontantPaye: null,
     counts: {
       envoyes: 3, signes: 1, nonSignes: 2, participantsConcernes: 3, participantsARelancer: 2,
       amontCoeur: { signes: 0, total: 0 }, aval: { signes: 0, total: 0 },
@@ -179,20 +180,20 @@ describe('COCKPIT — variante "sheet" (idAdf + réutilisation du CSV)', () => {
   const col = (row: readonly string[], header: string): string | undefined =>
     row[SESSIONS_SHEET_HEADERS.indexOf(header as (typeof SESSIONS_SHEET_HEADERS)[number])];
 
-  it('entêtes sheet = idAdf + CSV + "À relancer (noms)" + S11.2 + "Dates synchrones" + facture 1/2 + "Montant déposé" EN FIN', () => {
+  it('entêtes sheet = idAdf + CSV + "À relancer (noms)" + S11.2 + "Dates synchrones" + facture 1/2 (+ montants payés) + "Montant déposé" EN FIN', () => {
     expect(SESSIONS_SHEET_HEADERS).toEqual([
       'idAdf', ...SESSIONS_CSV_HEADERS, 'À relancer (noms)', 'Montant session', 'Hors DPC (nb)', 'Dates synchrones',
-      'Facture 1 - envoi', 'Facture 1 - paiement', 'Facture 2 - envoi', 'Facture 2 - paiement',
+      'Facture 1 - envoi', 'Facture 1 - paiement', 'Montant payé facture 1',
+      'Facture 2 - envoi', 'Facture 2 - paiement', 'Montant payé facture 2',
       'Montant déposé',
     ]);
     expect(SESSIONS_SHEET_HEADERS[0]).toBe('idAdf');
-    // "Montant déposé" EN DERNIER → aucun index de colonne existante ne bouge.
     expect(SESSIONS_SHEET_HEADERS.at(-1)).toBe('Montant déposé');
-    // S15 : les 4 colonnes facture 1/2 juste avant.
-    expect(SESSIONS_SHEET_HEADERS.slice(-5, -1)).toEqual([
-      'Facture 1 - envoi', 'Facture 1 - paiement', 'Facture 2 - envoi', 'Facture 2 - paiement',
-    ]);
-    expect(SESSIONS_SHEET_HEADERS.at(-6)).toBe('Dates synchrones'); // inchangée de position relative
+    // Chaque "Montant payé facture N" JUSTE APRÈS la date de paiement de sa facture.
+    const i = (h: string) => SESSIONS_SHEET_HEADERS.indexOf(h as (typeof SESSIONS_SHEET_HEADERS)[number]);
+    expect(i('Montant payé facture 1')).toBe(i('Facture 1 - paiement') + 1);
+    expect(i('Montant payé facture 2')).toBe(i('Facture 2 - paiement') + 1);
+    expect(SESSIONS_SHEET_HEADERS.at(-8)).toBe('Dates synchrones'); // inchangée de position relative
   });
 
   it('renommage "Montant €" → "Montant € payé" EN PLACE (index 11 dans le sheet, 10 dans le CSV)', () => {
@@ -215,7 +216,7 @@ describe('COCKPIT — variante "sheet" (idAdf + réutilisation du CSV)', () => {
     const s = session({ idAdf: '2656', aCheval: true, eppAmontConnecte: true });
     const row = sessionToSheetRow(s, ['Hugo CASTAN']);
     expect(row[0]).toBe('2656'); // clé de correspondance
-    expect(row).toHaveLength(SESSIONS_SHEET_HEADERS.length); // = 1 + 19 + 1 + 3 + 4 (S15) + 1 (Montant déposé)
+    expect(row).toHaveLength(SESSIONS_SHEET_HEADERS.length); // = 1 + 19 + 1 + 3 + 6 (S15 + montants payés) + 1 (Montant déposé)
     // Réutilisation : la tranche CSV (après idAdf) == la ligne CSV telle quelle.
     expect(row.slice(1, 1 + CSV_LEN)).toEqual(sessionToCsvRow(s));
     expect(col(row, 'À relancer (noms)')).toBe('Hugo CASTAN');
@@ -296,6 +297,37 @@ describe('COCKPIT — variante "sheet" (idAdf + réutilisation du CSV)', () => {
   it('sessionToSheetRow : session NON à cheval → les 4 colonnes S15 à "-"', () => {
     const row = sessionToSheetRow(session({ idAdf: '1', aCheval: false }));
     expect(FACTURES_12.map((h) => col(row, h))).toEqual([EMPTY_DISPLAY, EMPTY_DISPLAY, EMPTY_DISPLAY, EMPTY_DISPLAY]);
+    expect(col(row, 'Montant payé facture 1')).toBe(EMPTY_DISPLAY);
+    expect(col(row, 'Montant payé facture 2')).toBe(EMPTY_DISPLAY);
+  });
+
+  // --- Montants payés facture 1/2 (montant_total_paiements de la facture du slot) ---
+  it('schéma 3306 : "Montant payé facture 1/2" ← facture1/2MontantPaye (virgule FR), à côté de leur date', () => {
+    const row = sessionToSheetRow(session({
+      idAdf: '3306', aCheval: true,
+      facture1DateEnvoi: '2026-06-18', facture1DatePaiement: '2026-06-29', facture1MontantPaye: 3885.5,
+      facture2DateEnvoi: '2026-09-04', facture2DatePaiement: '2026-09-17', facture2MontantPaye: 1729,
+    }));
+    const iP1 = SESSIONS_SHEET_HEADERS.indexOf('Facture 1 - paiement');
+    const iP2 = SESSIONS_SHEET_HEADERS.indexOf('Facture 2 - paiement');
+    expect(row.slice(iP1, iP1 + 2)).toEqual(['29/06/26', '3885,50']);
+    expect(row.slice(iP2, iP2 + 2)).toEqual(['17/09/26', '1729,00']);
+  });
+
+  it('montant payé 0 (facture à 0 € datée) → "0,00", pas "-"', () => {
+    const row = sessionToSheetRow(session({ idAdf: '1', aCheval: true, facture1DatePaiement: '2026-07-03', facture1MontantPaye: 0 }));
+    expect(col(row, 'Montant payé facture 1')).toBe('0,00');
+  });
+
+  it('montant payé null (facture non payée, ou slot vide) → EMPTY_DISPLAY', () => {
+    const row = sessionToSheetRow(session({ idAdf: '1', aCheval: true, facture1DateEnvoi: '2026-03-02', facture1MontantPaye: null }));
+    expect(col(row, 'Montant payé facture 1')).toBe(EMPTY_DISPLAY);
+    expect(col(row, 'Montant payé facture 2')).toBe(EMPTY_DISPLAY);
+  });
+
+  it('"Montant payé facture 1/2" propres au format sheet : absents du CSV cockpit', () => {
+    expect(SESSIONS_CSV_HEADERS).not.toContain('Montant payé facture 1');
+    expect(SESSIONS_CSV_HEADERS).not.toContain('Montant payé facture 2');
   });
 
   it('sessionToSheetRow : idAdf vide reste en 1re colonne (pas de crash, cohérent CSV)', () => {
@@ -359,7 +391,7 @@ describe('À RELANCER — colonnes & mapping', () => {
   });
 });
 
-// --- S18 : onglet "Sessions à cheval 2026 - Auto" ----------------------------
+// --- S18 : onglet "Sessions a cheval 2026 - Auto" ----------------------------
 describe('ONGLET à cheval 2026 — 3 colonnes de bloc (S18)', () => {
   const withBlocs = (amontCoeur: { signes: number; total: number }, aval: { signes: number; total: number }, facturable = false) =>
     session({

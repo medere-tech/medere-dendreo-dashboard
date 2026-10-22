@@ -130,8 +130,9 @@ describe('GET /api/export/sheet', () => {
     // La route ne redéfinit AUCUN en-tête : elle sert SESSIONS_SHEET_HEADERS tel quel.
     expect(body.headers).toEqual([...SESSIONS_SHEET_HEADERS]);
     expect(body.headers.slice(0, 1 + SESSIONS_CSV_HEADERS.length)).toEqual(['idAdf', ...SESSIONS_CSV_HEADERS]);
-    expect(body.headers.slice(-5)).toEqual([
-      'Facture 1 - envoi', 'Facture 1 - paiement', 'Facture 2 - envoi', 'Facture 2 - paiement', 'Montant déposé',
+    expect(body.headers.slice(-7)).toEqual([
+      'Facture 1 - envoi', 'Facture 1 - paiement', 'Montant payé facture 1',
+      'Facture 2 - envoi', 'Facture 2 - paiement', 'Montant payé facture 2', 'Montant déposé',
     ]);
     expect(body.headers).toContain('Montant € payé');
     expect(body.headers).not.toContain('Montant €');
@@ -680,7 +681,7 @@ describe('GET /api/export/sheet — filtre ?debutYear', () => {
   });
 });
 
-// --- S18 : ?blocsCheval=1 (onglet "Sessions à cheval 2026 - Auto") ------------
+// --- S18 : ?blocsCheval=1 (onglet "Sessions a cheval 2026 - Auto") ------------
 describe('GET /api/export/sheet?blocsCheval=1 (S18)', () => {
   /** Session à cheval 2026→2027 AVEC les compteurs par bloc et le flag facturable. */
   const RAW_CHEVAL_2026 = {
@@ -699,7 +700,7 @@ describe('GET /api/export/sheet?blocsCheval=1 (S18)', () => {
     process.env.SHEET_EXPORT_TOKEN = TOKEN;
   });
 
-  it('AVEC le flag → headers = SESSIONS_SHEET_HEADERS_CHEVAL2026 (28 + 3)', async () => {
+  it('AVEC le flag → headers = SESSIONS_SHEET_HEADERS_CHEVAL2026 (30 + 3)', async () => {
     const GET = await freshRoute();
     const body = await (await GET(req(`Bearer ${TOKEN}`, '?blocsCheval=1'))).json();
 

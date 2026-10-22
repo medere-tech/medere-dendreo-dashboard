@@ -57,12 +57,15 @@ export interface SessionDoc {
   factureDatePaiement: string | null; // plus récente date_paiement des factures ANDPC PAYÉES (jour Paris)
   factureMontantDepose: number | null; // Σ montant_total_ht des factures ANDPC DÉPOSÉES (date_envoi), payées OU NON
   // --- S15 : facture 1 / facture 2 des sessions À CHEVAL ---------------------
-  // Factures ANDPC triées par date_emission croissante : 1 = budget année de DÉBUT,
-  // 2 = budget année de FIN. TOUS null hors session à cheval (jour Paris | null).
+  // Factures ANDPC VIVANTES (hors avoirs et factures entièrement annulées) triées par
+  // date_emission croissante : 1 = budget année de DÉBUT, 2 = budget année de FIN.
+  // TOUS null hors session à cheval (jour Paris | null).
   facture1DateEnvoi: string | null;
   facture1DatePaiement: string | null;
+  facture1MontantPaye: number | null; // montant_total_paiements de la facture 1 ; null si ni datée ni encaissée
   facture2DateEnvoi: string | null;
   facture2DatePaiement: string | null;
+  facture2MontantPaye: number | null; // idem facture 2
   counts: Counts;
   oldestPendingSentDate: string | null;
   lastSyncedAt: string;
@@ -150,8 +153,10 @@ export function toSessionDoc(raw: DocumentData): SessionDoc {
     // S15 — absents d'un doc pré-S15 → null (jamais undefined côté UI/export).
     facture1DateEnvoi: asNullableStr(raw.facture1DateEnvoi),
     facture1DatePaiement: asNullableStr(raw.facture1DatePaiement),
+    facture1MontantPaye: asNullableNum(raw.facture1MontantPaye), // doc pré-montants (champ absent) → null
     facture2DateEnvoi: asNullableStr(raw.facture2DateEnvoi),
     facture2DatePaiement: asNullableStr(raw.facture2DatePaiement),
+    facture2MontantPaye: asNullableNum(raw.facture2MontantPaye),
     counts: normalizeCounts(raw.counts),
     oldestPendingSentDate: asNullableStr(raw.oldestPendingSentDate),
     lastSyncedAt: asStr(raw.lastSyncedAt),
